@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v46", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v46 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -472,7 +472,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v46")
+st.title("決算画像ジェネレーター v46 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラーを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
