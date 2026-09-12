@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v47 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v48 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -52,6 +52,8 @@ META_DISPLAY_UNIT="__display_unit"
 META_REVENUE_COLOR="__revenue_color"
 META_OPERATING_PROFIT_COLOR="__operating_profit_color"
 META_MARGIN_COLOR="__margin_color"  # optional / backward-compatible extension
+META_ORDERS_COLOR="__orders_color"
+META_BACKLOG_COLOR="__backlog_color"
 META_SEGMENT_PREFIX="__color_"
 
 def _first_nonempty(series):
@@ -171,6 +173,15 @@ def company_csv_for_download(df, currency, unit, revenue_color, operating_profit
     }
     if margin_color is not None:
         meta[META_MARGIN_COLOR] = normalize_color(margin_color, THEME["margin"])
+    return add_metadata_columns(df, meta)
+
+def orders_csv_for_download(df, currency, unit, orders_color, backlog_color):
+    meta = {
+        META_INPUT_CURRENCY: currency,
+        META_DISPLAY_UNIT: unit,
+        META_ORDERS_COLOR: normalize_color(orders_color, THEME["revenue"]),
+        META_BACKLOG_COLOR: normalize_color(backlog_color, THEME["profit"]),
+    }
     return add_metadata_columns(df, meta)
 
 def segment_csv_for_download(df, currency, unit, segment_colors):
@@ -368,6 +379,75 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     buf.seek(0)
     return fig,buf
 
+def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
+                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note):
+    df=df.dropna(subset=["period"]).copy()
+    df["period"]=df["period"].astype(str)
+    keep=choose_periods(df["period"],n)
+    df=df[df["period"].isin(keep)].copy()
+    df["period"]=pd.Categorical(df["period"],categories=keep,ordered=True)
+    df=df.sort_values("period").reset_index(drop=True)
+
+    raw_orders=pd.to_numeric(df["orders"],errors="coerce")
+    raw_backlog=pd.to_numeric(df["backlog"],errors="coerce")
+    orders=convert(raw_orders,currency,mode,unit,fx)
+    backlog=convert(raw_backlog,currency,mode,unit,fx)
+
+    x=np.arange(len(df)); bw=.36
+    fw,fh=fig_size(aspect,cw,ch)
+    fig,ax=plt.subplots(figsize=(fw,fh))
+    fig.patch.set_facecolor(THEME["bg"])
+    style_axis(ax,11)
+
+    b1=ax.bar(x-bw/2,orders,bw,color=orders_color,label="受注高",zorder=3)
+    b2=ax.bar(x+bw/2,backlog,bw,color=backlog_color,label="受注残高",zorder=3)
+
+    periods=df["period"].astype(str).tolist()
+    ax.set_xticks(x)
+    ax.set_xticklabels(period_labels(periods,ptype),fontsize=12)
+    ax.text(-.045,1.01,f"（{unit}）",transform=ax.transAxes,
+            fontsize=13,color=THEME["text"])
+
+    leg=ax.legend([b1,b2],["受注高","受注残高"],loc="upper left",
+                  bbox_to_anchor=(0.015,0.985),ncol=1,fontsize=13,
+                  frameon=True,fancybox=True,framealpha=1,
+                  handlelength=2.7,handleheight=1.2,labelspacing=.7,borderpad=.8)
+    leg.get_frame().set_facecolor(THEME["bg"])
+    leg.get_frame().set_edgecolor(THEME["card_border"])
+
+    fig.text(.04,.965,company,fontsize=30,fontweight="bold",
+             color=THEME["text"],ha="left",va="top")
+    if periods:
+        fig.text(.91,.965,f"{periods[-1]}（最新）",fontsize=14,fontweight="bold",
+                 color=THEME["text"],ha="right",va="top")
+    fig.text(.04,.895,f"受注高・受注残高の推移（{currency_basis(currency,mode)}）",
+             fontsize=17,fontweight="bold",color=THEME["muted"],ha="left",va="top")
+
+    if show_latest and len(df):
+        lag=4 if ptype=="四半期" else 1
+        og=bg=None
+        if len(df)>lag:
+            og=growth(raw_orders.iloc[-1],raw_orders.iloc[-1-lag])
+            bg=growth(raw_backlog.iloc[-1],raw_backlog.iloc[-1-lag])
+        add_kpi_card(fig,.17,.69,.27,.14,"受注高",f"{fmt(orders.iloc[-1])} {unit}",
+                     f"前年比 {og:+.1f}%" if og is not None else "",orders_color,"#F1F6FF")
+        add_kpi_card(fig,.56,.69,.27,.14,"受注残高",f"{fmt(backlog.iloc[-1])} {unit}",
+                     f"前年比 {bg:+.1f}%" if bg is not None else "",backlog_color,"#F0FAF8")
+        if pd.notna(orders.iloc[-1]):
+            add_callout(ax,x[-1]-bw/2,orders.iloc[-1],fmt(orders.iloc[-1]),orders_color,(-18,30))
+        if pd.notna(backlog.iloc[-1]):
+            add_callout(ax,x[-1]+bw/2,backlog.iloc[-1],fmt(backlog.iloc[-1]),backlog_color,(30,16))
+
+    ymin,ymax=ax.get_ylim()
+    if ymax>0: ax.set_ylim(ymin,ymax*1.14)
+    plt.subplots_adjust(left=.08,right=.92,bottom=.16,top=.65)
+    note_text(fig,note,currency,mode,fx,y=.025)
+
+    buf=io.BytesIO()
+    fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
+    buf.seek(0)
+    return fig,buf
+
 def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
                   aspect,cw,ch,labels_on,dpi,note,segment_colors):
     raw=df.copy()
@@ -521,7 +601,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v47 Deploy")
+st.title("決算画像ジェネレーター v48 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラーを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
@@ -556,7 +636,7 @@ else:
     periods=[f"FY{y}" for y in range(1997,2027)]
     mx_allowed=30
 
-t1,t2,t3=st.tabs(["会社全体","セグメント売上高","セグメント利益"])
+t1,t2,t3,t4=st.tabs(["会社全体","セグメント売上高","セグメント利益","受注高・受注残高"])
 
 with t1:
     sample_company=pd.DataFrame({
@@ -741,3 +821,67 @@ def seg_tab(kind):
 
 with t2: seg_tab("売上高")
 with t3: seg_tab("利益")
+
+with t4:
+    sample_orders=pd.DataFrame({
+        "period":periods,
+        "orders":np.linspace(220000,910000,len(periods)).astype(int),
+        "backlog":np.linspace(310000,1280000,len(periods)).astype(int)
+    })
+    uploaded_orders=st.file_uploader(
+        "受注高・受注残高CSVを読み込む（設定列つきCSV対応）",
+        type=["csv"],key="orders_csv_upload"
+    )
+    orders_meta={}; orders_source=sample_orders
+    if uploaded_orders is not None:
+        try:
+            loaded,orders_meta=read_uploaded_csv(uploaded_orders)
+            required={"period","orders","backlog"}
+            if required.issubset(set(loaded.columns)):
+                orders_source=loaded
+            else:
+                st.error("CSVには period / orders / backlog 列が必要です。")
+        except Exception as e:
+            st.error(str(e))
+
+    csv_currency,csv_mode,csv_unit=resolve_csv_display(orders_meta,currency,mode,unit)
+    if orders_meta:
+        st.caption(f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
+
+    oed=st.data_editor(orders_source,use_container_width=True,num_rows="dynamic",key="orders_editor")
+    oed=normalize_numeric_columns(oed)
+    av=max(len(oed.dropna(subset=["period"])),1)
+    on=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="norders")
+
+    default_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),THEME["revenue"])
+    default_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),THEME["profit"])
+    oc1,oc2=st.columns(2)
+    with oc1:
+        orders_color=st.color_picker("受注高カラー",default_orders_color,key="orders_color")
+    with oc2:
+        backlog_color=st.color_picker("受注残高カラー",default_backlog_color,key="backlog_color")
+    effective_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),orders_color)
+    effective_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),backlog_color)
+    show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
+
+    orders_download=orders_csv_for_download(
+        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color
+    )
+    od1,od2=st.columns(2)
+    with od1:
+        st.download_button("CSVをダウンロード",
+            orders_download.to_csv(index=False).encode("utf-8-sig"),
+            "orders_backlog.csv","text/csv",use_container_width=True)
+    with od2:
+        generate_orders=st.button("受注高・受注残高グラフを生成",
+            type="primary",use_container_width=True,key="generate_orders")
+
+    if generate_orders:
+        fig,png=orders_chart(
+            oed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(on),
+            effective_orders_color,effective_backlog_color,
+            aspect,cw,ch,show_orders_latest,dpi,note
+        )
+        st.pyplot(fig,use_container_width=True)
+        st.download_button("PNGをダウンロード",png.getvalue(),
+                           "orders_backlog.png","image/png",key="download_orders")
