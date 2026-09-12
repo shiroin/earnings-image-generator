@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v46 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v47 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -68,6 +68,45 @@ def normalize_color(value, fallback=None):
     except Exception:
         return fallback
 
+def coerce_numeric_series(series):
+    """CSV/表計算ソフト由来の数値・数値文字列を安全に数値化する。
+
+    例: 1234 / 1234.5 / "1,234" / "１，２３４" / "(1,234)"
+    """
+    def _one(v):
+        if pd.isna(v):
+            return np.nan
+        if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+            return float(v)
+        text=str(v).strip()
+        if not text:
+            return np.nan
+        # Excel / Google Sheets などで見かける全角数字・全角カンマにも対応
+        trans=str.maketrans("０１２３４５６７８９，．－＋％","0123456789,.-+%")
+        text=text.translate(trans)
+        text=text.replace("−","-").replace("–","-").replace("—","-")
+        negative=text.startswith("(") and text.endswith(")")
+        if negative:
+            text=text[1:-1]
+        # 桁区切り、空白、一般的な通貨記号を除去
+        for token in (",", " ", "\u3000", "¥", "￥", "$", "€"):
+            text=text.replace(token,"")
+        # 万が一 % 付きでも文字列エラーにせず数値として読めるようにする
+        text=text.replace("%","")
+        num=pd.to_numeric(text,errors="coerce")
+        if pd.isna(num):
+            return np.nan
+        return -float(num) if negative else float(num)
+    return series.map(_one)
+
+def normalize_numeric_columns(df):
+    """period以外のデータ列を、CSVの表示形式に依存せず数値化する。"""
+    out=df.copy()
+    for c in out.columns:
+        if str(c) != "period":
+            out[c]=coerce_numeric_series(out[c])
+    return out
+
 def read_uploaded_csv(uploaded):
     """Read UTF-8/UTF-8-SIG/CP932 CSV and split reserved metadata columns."""
     if uploaded is None:
@@ -88,7 +127,9 @@ def read_uploaded_csv(uploaded):
         if str(c).startswith(META_PREFIX):
             meta[str(c)] = _first_nonempty(df[c])
     data_cols = [c for c in df.columns if not str(c).startswith(META_PREFIX)]
-    return df[data_cols].copy(), meta
+    data = df[data_cols].copy()
+    data = normalize_numeric_columns(data)
+    return data, meta
 
 def resolve_csv_display(meta, fallback_currency, fallback_mode, fallback_unit):
     """CSVの通貨・表示単位があれば優先。表示モードは表示単位から自動判定。"""
@@ -379,11 +420,19 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     if style=="積み上げ":
         handles = handles[::-1]
         legend_labels = legend_labels[::-1]
-    leg=ax.legend(handles,legend_labels,loc="upper left",bbox_to_anchor=(0.01,0.985),ncol=1,
-                  fontsize=16,frameon=True,handlelength=2.4,
-                  labelspacing=.65,borderpad=.8)
+    leg=ax.legend(handles,legend_labels,loc="upper left",bbox_to_anchor=(0.01,0.99),ncol=1,
+                  fontsize=14,frameon=True,handlelength=2.1,
+                  labelspacing=.50,borderpad=.65)
     leg.get_frame().set_facecolor(THEME["bg"])
     leg.get_frame().set_edgecolor(THEME["card_border"])
+
+    # 凡例が棒に重ならないよう、凡例の行数に応じて上側に余白を確保する。
+    # 文字サイズも少し小さくして、縦型凡例の読みやすさは維持する。
+    if legend_labels:
+        ymin, ymax = ax.get_ylim()
+        span = max(ymax - ymin, 1.0)
+        legend_headroom = min(0.40, 0.06 + 0.035 * len(legend_labels))
+        ax.set_ylim(ymin, ymax + span * legend_headroom)
 
     # Compact title/subtitle -> graph spacing
     fig.text(.035,.965,company,fontsize=38,fontweight="bold",
@@ -472,7 +521,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v46 Deploy")
+st.title("決算画像ジェネレーター v47 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラーを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
@@ -544,6 +593,7 @@ with t1:
         )
 
     ed=st.data_editor(company_source,use_container_width=True,num_rows="dynamic",key="company_editor")
+    ed=normalize_numeric_columns(ed)
     av=max(len(ed.dropna(subset=["period"])),1)
     n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av))
 
@@ -636,6 +686,7 @@ def seg_tab(kind):
     ed=st.data_editor(
         seg_source,use_container_width=True,num_rows="dynamic",key=key
     )
+    ed=normalize_numeric_columns(ed)
 
     segs=[c for c in ed.columns if c!="period"]
     st.markdown("**セグメントカラー**")
