@@ -1,0 +1,692 @@
+
+import io
+import numpy as np
+import pandas as pd
+import streamlit as st
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import matplotlib.colors as mcolors
+from matplotlib.ticker import FuncFormatter
+from matplotlib.patches import FancyBboxPatch, Rectangle
+
+st.set_page_config(page_title="決算画像ジェネレーター v46", layout="wide")
+
+def set_japanese_font():
+    candidates = [
+        "Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","YuGothic",
+        "Meiryo","Noto Sans CJK JP","Noto Sans JP","IPAexGothic","IPAGothic"
+    ]
+    installed = {f.name for f in fm.fontManager.ttflist}
+    for name in candidates:
+        if name in installed:
+            plt.rcParams["font.family"] = name
+            break
+    plt.rcParams["axes.unicode_minus"] = False
+
+set_japanese_font()
+
+THEME = {
+    "bg":"#F3F4F6",
+    "text":"#17325C","muted":"#61728A","grid":"#DCE3EC","axis":"#AEB9C7",
+    "revenue":"#1675F8","profit":"#08A89C","margin":"#FF8A00",
+    "revenue_bg":"#F1F6FF","profit_bg":"#F0FAF8","margin_bg":"#FFF7EE",
+    "card_border":"#DCE3EC",
+    "segment_palette":["#1675F8","#20B779","#FFA126","#F45B73","#8B5BD6",
+                       "#0EA5E9","#84CC16","#D946EF","#64748B"]
+}
+
+LOCAL_UNITS={
+    "JPY":{"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001},
+    "USD":{"百万ドル":1.0,"10億ドル":0.001},
+    "EUR":{"100万ユーロ":1.0,"10億ユーロ":0.001},
+    "CNY":{"百万元":1.0,"億元":0.01,"10億元":0.001}
+}
+JPY_UNITS={"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001}
+DEFAULT_LOCAL={"JPY":"億円","USD":"10億ドル","EUR":"10億ユーロ","CNY":"億元"}
+ASPECTS={"16:9":(16,9),"4:3":(12,9),"3:2":(15,10),"1:1":(10,10),"9:16":(9,16)}
+
+
+META_PREFIX="__"
+META_INPUT_CURRENCY="__input_currency"
+META_DISPLAY_UNIT="__display_unit"
+META_REVENUE_COLOR="__revenue_color"
+META_OPERATING_PROFIT_COLOR="__operating_profit_color"
+META_MARGIN_COLOR="__margin_color"  # optional / backward-compatible extension
+META_SEGMENT_PREFIX="__color_"
+
+def _first_nonempty(series):
+    for v in series:
+        if pd.notna(v) and str(v).strip():
+            return str(v).strip()
+    return None
+
+def normalize_color(value, fallback=None):
+    if value is None or (isinstance(value,float) and pd.isna(value)):
+        return fallback
+    try:
+        return mcolors.to_hex(str(value).strip(), keep_alpha=False).upper()
+    except Exception:
+        return fallback
+
+def read_uploaded_csv(uploaded):
+    """Read UTF-8/UTF-8-SIG/CP932 CSV and split reserved metadata columns."""
+    if uploaded is None:
+        return None, {}
+    raw = uploaded.getvalue() if hasattr(uploaded, "getvalue") else uploaded
+    last_error = None
+    for enc in ("utf-8-sig","utf-8","cp932"):
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding=enc)
+            break
+        except Exception as e:
+            last_error = e
+    else:
+        raise ValueError(f"CSVを読み込めませんでした: {last_error}")
+
+    meta = {}
+    for c in df.columns:
+        if str(c).startswith(META_PREFIX):
+            meta[str(c)] = _first_nonempty(df[c])
+    data_cols = [c for c in df.columns if not str(c).startswith(META_PREFIX)]
+    return df[data_cols].copy(), meta
+
+def resolve_csv_display(meta, fallback_currency, fallback_mode, fallback_unit):
+    """CSVの通貨・表示単位があれば優先。表示モードは表示単位から自動判定。"""
+    currency = str(meta.get(META_INPUT_CURRENCY) or fallback_currency).upper()
+    if currency not in LOCAL_UNITS:
+        currency = fallback_currency
+
+    unit = meta.get(META_DISPLAY_UNIT) or fallback_unit
+    if currency == "JPY":
+        mode = "現地通貨"
+        if unit not in LOCAL_UNITS["JPY"]:
+            unit = fallback_unit if fallback_unit in LOCAL_UNITS["JPY"] else DEFAULT_LOCAL["JPY"]
+    else:
+        if unit in JPY_UNITS:
+            mode = "円換算"
+        elif unit in LOCAL_UNITS[currency]:
+            mode = "現地通貨"
+        else:
+            mode = fallback_mode
+            valid = JPY_UNITS if mode=="円換算" else LOCAL_UNITS[currency]
+            unit = fallback_unit if fallback_unit in valid else ("億円" if mode=="円換算" else DEFAULT_LOCAL[currency])
+    return currency, mode, unit
+
+def add_metadata_columns(df, meta_pairs):
+    """設定値はCSVの先頭データ行だけに書く。再読込時は先頭の非空値を採用。"""
+    out = df.copy()
+    for key, value in meta_pairs.items():
+        out[key] = ""
+        if len(out):
+            out.loc[out.index[0], key] = value
+    return out
+
+def company_csv_for_download(df, currency, unit, revenue_color, operating_profit_color, margin_color=None):
+    meta = {
+        META_INPUT_CURRENCY: currency,
+        META_DISPLAY_UNIT: unit,
+        META_REVENUE_COLOR: normalize_color(revenue_color, THEME["revenue"]),
+        META_OPERATING_PROFIT_COLOR: normalize_color(operating_profit_color, THEME["profit"]),
+    }
+    if margin_color is not None:
+        meta[META_MARGIN_COLOR] = normalize_color(margin_color, THEME["margin"])
+    return add_metadata_columns(df, meta)
+
+def segment_csv_for_download(df, currency, unit, segment_colors):
+    meta = {
+        META_INPUT_CURRENCY: currency,
+        META_DISPLAY_UNIT: unit,
+    }
+    for segment, color in segment_colors.items():
+        meta[f"{META_SEGMENT_PREFIX}{segment}"] = normalize_color(color, "#64748B")
+    return add_metadata_columns(df, meta)
+
+def growth(a,b):
+    if pd.isna(a) or pd.isna(b) or b==0: return None
+    return (a/b-1)*100
+
+def fmt(v):
+    if pd.isna(v): return ""
+    a=abs(v)
+    if a>=100: return f"{v:,.0f}"
+    if a>=10: return f"{v:,.1f}"
+    return f"{v:,.2f}"
+
+def choose_periods(periods,n):
+    p=list(dict.fromkeys([str(x) for x in periods if pd.notna(x) and str(x).strip()]))
+    return p[-n:] if len(p)>n else p
+
+def period_labels(periods,ptype):
+    latest_idx = len(periods) - 1
+    if ptype=="四半期":
+        # 最新四半期を必ず表示し、そこから4四半期ごと
+        return [
+            p if (latest_idx - i) % 4 == 0 else ""
+            for i, p in enumerate(periods)
+        ]
+    # 年度は最新年度を必ず表示し、そこから2年ごと
+    return [
+        p if (latest_idx - i) % 2 == 0 else ""
+        for i, p in enumerate(periods)
+    ]
+
+def fig_size(aspect,cw,ch):
+    return (cw,ch) if aspect=="カスタム" else ASPECTS[aspect]
+
+def convert(series,currency,mode,unit,fx):
+    raw=pd.to_numeric(series,errors="coerce")
+    if mode=="円換算":
+        rate=1 if currency=="JPY" else fx[currency]
+        return raw*rate*JPY_UNITS[unit]
+    return raw*LOCAL_UNITS[currency][unit]
+
+def currency_basis(currency,mode):
+    if mode=="円換算":
+        return "円換算"
+    return {"JPY":"円ベース","USD":"USドルベース","EUR":"ユーロベース","CNY":"人民元ベース"}[currency]
+
+def style_axis(ax, labelsize=17):
+    ax.set_facecolor(THEME["bg"])
+    ax.grid(axis="y",color=THEME["grid"],linewidth=1,zorder=0)
+    ax.grid(axis="x",visible=False)
+    for s in ["top","right"]:
+        ax.spines[s].set_visible(False)
+    ax.spines["left"].set_color(THEME["axis"])
+    ax.spines["bottom"].set_color(THEME["axis"])
+    ax.tick_params(axis="both",colors=THEME["text"],labelsize=labelsize,length=0)
+
+def note_text(fig, note, currency, mode, fx, y=0.025):
+    parts=[]
+    if note and str(note).strip():
+        parts.append(str(note).strip())
+    if mode=="円換算" and currency!="JPY":
+        parts.append(f"換算レート：1 {currency} = {fx[currency]:g} 円")
+    if parts:
+        fig.text(0.06,y,"　".join(parts),ha="left",va="bottom",
+                 fontsize=18,color=THEME["muted"])
+
+def add_kpi_card(fig,x,y,w,h,title,value,delta,color,bg):
+    fig.patches.append(FancyBboxPatch(
+        (x,y),w,h,boxstyle="round,pad=0.004,rounding_size=0.007",
+        transform=fig.transFigure,facecolor=bg,edgecolor=THEME["card_border"],
+        linewidth=1.0,zorder=10
+    ))
+    fig.patches.append(Rectangle(
+        (x,y),w*.045,h,transform=fig.transFigure,
+        facecolor=color,edgecolor="none",zorder=11
+    ))
+    cx=x+w*.045+(w-w*.045)/2
+
+    # KPIカードは以前の見やすい級数に固定。
+    # タイトル 17pt / 最新値 28pt / 前年比・前年差 15pt
+    fig.text(cx,y+h*.72,title,fontsize=17,fontweight="bold",
+             color=THEME["text"],ha="center",va="center",zorder=12)
+    fig.text(cx,y+h*.42,value,fontsize=28,fontweight="bold",
+             color=color,ha="center",va="center",zorder=12)
+    fig.text(cx,y+h*.17,delta,fontsize=15,fontweight="bold",
+             color=color,ha="center",va="center",zorder=12)
+
+def add_callout(ax,x,y,text,color,offset):
+    ax.annotate(
+        text,xy=(x,y),xytext=offset,textcoords="offset points",
+        ha="center",va="center",fontsize=14,fontweight="bold",color="white",
+        bbox=dict(boxstyle="round,pad=.28",fc=color,ec=color),
+        arrowprops=dict(arrowstyle="-",color=color,lw=1.4),zorder=10
+    )
+
+def company_chart(df,company,currency,mode,unit,fx,ptype,n,
+                  rc,oc,mc,aspect,cw,ch,show_margin,show_latest,dpi,note):
+    df=df.dropna(subset=["period","revenue","operating_profit"]).copy()
+    df["period"]=df["period"].astype(str)
+    keep=choose_periods(df["period"],n)
+    df=df[df["period"].isin(keep)].copy()
+    df["period"]=pd.Categorical(df["period"],categories=keep,ordered=True)
+    df=df.sort_values("period").reset_index(drop=True)
+
+    rr=pd.to_numeric(df["revenue"],errors="coerce")
+    oo=pd.to_numeric(df["operating_profit"],errors="coerce")
+    rev=convert(rr,currency,mode,unit,fx)
+    op=convert(oo,currency,mode,unit,fx)
+    margin=np.where(rr!=0,oo/rr*100,np.nan)
+
+    x=np.arange(len(df)); bw=.36
+    fw,fh=fig_size(aspect,cw,ch)
+    fig,ax=plt.subplots(figsize=(fw,fh))
+    fig.patch.set_facecolor(THEME["bg"])
+    style_axis(ax,11)
+
+    b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
+    b2=ax.bar(x+bw/2,op,bw,color=oc,label="営業利益（左軸）",zorder=3)
+    handles=[b1,b2]; labels=["売上高（左軸）","営業利益（左軸）"]
+
+    ax2=None
+    if show_margin:
+        ax2=ax.twinx()
+        ax2.set_facecolor("none")
+        line,=ax2.plot(x,margin,color=mc,marker="o",markersize=6,
+                       markeredgecolor="white",markeredgewidth=.7,
+                       linewidth=2.7,zorder=6,label="営業利益率（右軸）")
+        ax2.yaxis.set_major_formatter(FuncFormatter(lambda v,pos:f"{v:.0f}%"))
+        ax2.tick_params(axis="y",colors=THEME["text"],labelsize=11,length=0)
+        for s in ["top","left"]: ax2.spines[s].set_visible(False)
+        ax2.spines["right"].set_color(THEME["axis"])
+        handles.append(line); labels.append("営業利益率（右軸）")
+
+    periods=df["period"].astype(str).tolist()
+    ax.set_xticks(x)
+    ax.set_xticklabels(period_labels(periods,ptype),fontsize=12)
+    ax.text(-.045,1.01,f"（{unit}）",transform=ax.transAxes,
+            fontsize=13,color=THEME["text"])
+
+    leg=ax.legend(handles,labels,loc="upper left",bbox_to_anchor=(0.015,0.985),
+                  ncol=1,fontsize=13.5,frameon=True,fancybox=True,framealpha=1,
+                  handlelength=2.7,handleheight=1.2,labelspacing=.8,borderpad=.8)
+    leg.get_frame().set_facecolor(THEME["bg"])
+    leg.get_frame().set_edgecolor(THEME["card_border"])
+
+    # 1 Title / 2 Subtitle / 3 KPI / 4 Chart / 5 Notes
+    fig.text(.04,.965,company,fontsize=30,fontweight="bold",
+             color=THEME["text"],ha="left",va="top")
+    if periods:
+        fig.text(.91,.965,f"{periods[-1]}（最新）",fontsize=14,fontweight="bold",
+                 color=THEME["text"],ha="right",va="top")
+    subtitle=f"売上高・営業利益・営業利益率の推移（{currency_basis(currency,mode)}）"
+    fig.text(.04,.895,subtitle,fontsize=17,fontweight="bold",
+             color=THEME["muted"],ha="left",va="top")
+
+    if show_latest and len(df):
+        lag=4 if ptype=="四半期" else 1
+        rg=og=md=None
+        if len(df)>lag:
+            rg=growth(rr.iloc[-1],rr.iloc[-1-lag])
+            og=growth(oo.iloc[-1],oo.iloc[-1-lag])
+            md=margin[-1]-margin[-1-lag]
+        specs=[
+            ("売上高",f"{fmt(rev.iloc[-1])} {unit}",f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
+            ("営業利益",f"{fmt(op.iloc[-1])} {unit}",f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
+            ("営業利益率",f"{margin[-1]:.1f}%",f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
+        ]
+        xs=[.055,.365,.675]
+        for x0,s in zip(xs,specs):
+            add_kpi_card(fig,x0,.69,.27,.14,*s)
+        add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
+        add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
+        if show_margin:
+            add_callout(ax2,x[-1],margin[-1],f"{margin[-1]:.1f}%",mc,(40,25))
+
+    ymin,ymax=ax.get_ylim()
+    if ymax>0: ax.set_ylim(ymin,ymax*1.14)
+    if ax2 is not None: ax2.set_ylim(0,max(10,np.nanmax(margin)*1.35))
+
+    # Graph band leaves a dedicated note band below it.
+    plt.subplots_adjust(left=.08,right=.92,bottom=.16,top=.65)
+    note_text(fig,note,currency,mode,fx,y=.025)
+
+    buf=io.BytesIO()
+    fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
+    buf.seek(0)
+    return fig,buf
+
+def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
+                  aspect,cw,ch,labels_on,dpi,note,segment_colors):
+    raw=df.copy()
+    segs=[c for c in raw.columns if c!="period" and not raw[c].isna().all()]
+    keep=choose_periods(raw["period"],n)
+    raw=raw[raw["period"].astype(str).isin(keep)].copy()
+    raw["period"]=pd.Categorical(raw["period"].astype(str),categories=keep,ordered=True)
+    raw=raw.sort_values("period").reset_index(drop=True)
+
+    disp=raw.copy()
+    for c in segs:
+        disp[c]=convert(raw[c],currency,mode,unit,fx)
+
+    fw,fh=fig_size(aspect,cw,ch)
+    fig,ax=plt.subplots(figsize=(fw,fh))
+    fig.patch.set_facecolor(THEME["bg"])
+    style_axis(ax,11)
+
+    colors=[segment_colors.get(s,THEME["segment_palette"][i%len(THEME["segment_palette"])])
+            for i,s in enumerate(segs)]
+    x=np.arange(len(disp))
+    latest_positions=[]
+
+    if style=="積み上げ":
+        pos=np.zeros(len(disp)); neg=np.zeros(len(disp))
+        for i,s in enumerate(segs):
+            vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
+            bottoms=np.where(vals>=0,pos,neg)
+            ax.bar(x,vals,bottom=bottoms,width=.68,color=colors[i],label=s,zorder=3)
+            if len(disp): latest_positions.append((s,vals[-1],bottoms[-1]+vals[-1]/2,colors[i]))
+            pos+=np.where(vals>=0,vals,0); neg+=np.where(vals<0,vals,0)
+    else:
+        ns=max(len(segs),1); bw=.88/ns
+        offsets=(np.arange(ns)-(ns-1)/2)*bw
+        for i,s in enumerate(segs):
+            vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
+            xpos=x+offsets[i]
+            ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=s,zorder=3)
+            if len(disp): latest_positions.append((s,vals[-1],vals[-1],colors[i]))
+
+    plist=disp["period"].astype(str).tolist()
+    ax.set_xticks(x)
+    ax.set_xticklabels(period_labels(plist,ptype),fontsize=16)
+    ax.text(-.045,1.01,f"（{unit}）",transform=ax.transAxes,
+            fontsize=17,color=THEME["text"])
+
+    # For stacked bars, the visual stack is bottom=first segment, top=last segment.
+    # Reverse only the legend so its top-to-bottom order matches the bar's top-to-bottom order.
+    handles, legend_labels = ax.get_legend_handles_labels()
+    if style=="積み上げ":
+        handles = handles[::-1]
+        legend_labels = legend_labels[::-1]
+    leg=ax.legend(handles,legend_labels,loc="upper left",bbox_to_anchor=(0.01,0.985),ncol=1,
+                  fontsize=16,frameon=True,handlelength=2.4,
+                  labelspacing=.65,borderpad=.8)
+    leg.get_frame().set_facecolor(THEME["bg"])
+    leg.get_frame().set_edgecolor(THEME["card_border"])
+
+    # Compact title/subtitle -> graph spacing
+    fig.text(.035,.965,company,fontsize=38,fontweight="bold",
+             color=THEME["text"],ha="left",va="top")
+    if plist:
+        fig.text(.965,.965,f"{plist[-1]}（最新）",fontsize=18,fontweight="bold",
+                 color=THEME["text"],ha="right",va="top")
+    subtitle=f"{title}の推移（{currency_basis(currency,mode)}）"
+    fig.text(.035,.895,subtitle,fontsize=22,fontweight="bold",
+             color=THEME["muted"],ha="left",va="top")
+
+    lag=4 if ptype=="四半期" else 1
+
+    ratio = fw / fh
+    portrait = ratio <= 0.80
+    squareish = 0.80 < ratio <= 1.12
+
+    if portrait:
+        plt.subplots_adjust(left=.10,right=.94,bottom=.47,top=.80)
+        if len(disp): ax.set_xlim(-0.65, len(disp)-0.25)
+    elif squareish:
+        # 1:1専用。右側の最新値パネルに十分な幅を確保。
+        plt.subplots_adjust(left=.065,right=.69,bottom=.14,top=.80)
+        if len(disp): ax.set_xlim(-0.65, len(disp)-0.05)
+    else:
+        plt.subplots_adjust(left=.07,right=.755,bottom=.14,top=.82)
+        if len(disp): ax.set_xlim(-0.65, len(disp)-0.10)
+
+    if labels_on and len(disp):
+        ordered=list(reversed(segs))
+
+        if portrait:
+            fig.text(.39,.425,"最新値",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"])
+            fig.text(.39,.397,f"（{unit}）",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"])
+            fig.text(.68,.425,"前年比\n成長率",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"],linespacing=1.05)
+            y_top=.345; step=min(.058,.27/max(len(ordered),1))
+            value_x=.39; yoy_x=.68; value_fs=18; yoy_fs=16
+        elif squareish:
+            # 1:1: ヘッダーとカードを中央寄せし、2列を明確に分離。
+            fig.text(.775,.800,"最新値",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"])
+            fig.text(.775,.765,f"（{unit}）",ha="center",va="top",
+                     fontsize=14.5,fontweight="bold",color=THEME["text"])
+            fig.text(.915,.800,"前年比\n成長率",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"],linespacing=1.02)
+            y_top=.680; step=min(.088,.44/max(len(ordered),1))
+            value_x=.775; yoy_x=.915; value_fs=16.5; yoy_fs=15
+        else:
+            fig.text(.835,.820,"最新値",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"])
+            fig.text(.835,.785,f"（{unit}）",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"])
+            fig.text(.925,.820,"前年比\n成長率",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"],linespacing=1.05)
+            y_top=.700; step=min(.092,.46/max(len(ordered),1))
+            value_x=.835; yoy_x=.925; value_fs=19; yoy_fs=16
+
+        for j,s in enumerate(ordered):
+            i=segs.index(s)
+            color=colors[i]
+            v=pd.to_numeric(disp[s],errors="coerce").iloc[-1]
+            yoy=None
+            if len(raw)>lag:
+                yoy=growth(pd.to_numeric(raw[s],errors="coerce").iloc[-1],
+                           pd.to_numeric(raw[s],errors="coerce").iloc[-1-lag])
+            y=y_top-j*step
+            fig.text(value_x,y,f"{fmt(v)} {unit}",ha="center",va="center",
+                     fontsize=value_fs,fontweight="bold",color="white",
+                     bbox=dict(boxstyle="round,pad=.34",fc=color,ec=color))
+            fig.text(yoy_x,y,f"{yoy:+.1f}%" if yoy is not None else "—",
+                     ha="center",va="center",fontsize=yoy_fs,fontweight="bold",
+                     color=color,
+                     bbox=dict(boxstyle="round,pad=.28",fc=color+"18",ec="none"))
+
+    # Give plot some headroom without creating a gap above it.
+    ymin,ymax=ax.get_ylim()
+    if ymax>0: ax.set_ylim(ymin,ymax*1.08)
+
+    note_text(fig,note,currency,mode,fx,y=.022)
+
+    buf=io.BytesIO()
+    fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
+    buf.seek(0)
+    return fig,buf
+
+st.title("決算画像ジェネレーター v46")
+st.caption("CSV内に入力通貨・表示単位・系列カラーを埋め込める版。CSV指定がある項目は画面設定より優先します。")
+
+ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
+
+with st.sidebar:
+    company=st.text_input("企業名","サンプル株式会社")
+    note=st.text_input("注意書き","※ 最新期は会社予想")
+    currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY"])
+    mode=st.radio("グラフの通貨表示",["現地通貨","円換算"],horizontal=True)
+    usd=st.number_input("USD/JPY",0.01,value=150.0,step=.1)
+    eur=st.number_input("EUR/JPY",0.01,value=165.0,step=.1)
+    cny=st.number_input("CNY/JPY",0.01,value=21.0,step=.1)
+    fx={"USD":usd,"EUR":eur,"CNY":cny,"JPY":1.0}
+
+    units=list(JPY_UNITS.keys()) if mode=="円換算" else list(LOCAL_UNITS[currency].keys())
+    default="億円" if mode=="円換算" else DEFAULT_LOCAL[currency]
+    unit=st.selectbox("表示単位",units,index=units.index(default))
+
+    aspect=st.selectbox("縦横比",["16:9","4:3","3:2","1:1","9:16","カスタム"])
+    cw,ch=16.0,9.0
+    if aspect=="カスタム":
+        cw=st.number_input("横幅",5.0,30.0,16.0,.5)
+        ch=st.number_input("高さ",5.0,30.0,9.0,.5)
+    dpi=st.select_slider("解像度",[120,180,220,300],value=220)
+
+if ptype=="四半期":
+    periods=["2022/3","2022/6","2022/9","2022/12","2023/3","2023/6","2023/9","2023/12",
+             "2024/3","2024/6","2024/9","2024/12","2025/3","2025/6","2025/9","2025/12",
+             "2026/3","2026/6","2026/9","2026/12"]
+    mx_allowed=20
+else:
+    periods=[f"FY{y}" for y in range(1997,2027)]
+    mx_allowed=30
+
+t1,t2,t3=st.tabs(["会社全体","セグメント売上高","セグメント利益"])
+
+with t1:
+    sample_company=pd.DataFrame({
+        "period":periods,
+        "revenue":np.linspace(250000,865000,len(periods)).astype(int),
+        "operating_profit":np.linspace(18000,132000,len(periods)).astype(int)
+    })
+
+    uploaded_company=st.file_uploader(
+        "会社全体CSVを読み込む（設定列つきCSV対応）",
+        type=["csv"], key="company_csv_upload"
+    )
+
+    company_meta={}
+    company_source=sample_company
+    if uploaded_company is not None:
+        try:
+            loaded, company_meta=read_uploaded_csv(uploaded_company)
+            required={"period","revenue","operating_profit"}
+            if required.issubset(set(loaded.columns)):
+                company_source=loaded
+            else:
+                st.error("会社全体CSVには period / revenue / operating_profit 列が必要です。")
+        except Exception as e:
+            st.error(str(e))
+
+    csv_currency,csv_mode,csv_unit=resolve_csv_display(
+        company_meta,currency,mode,unit
+    )
+
+    if company_meta:
+        st.caption(
+            f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}"
+        )
+
+    ed=st.data_editor(company_source,use_container_width=True,num_rows="dynamic",key="company_editor")
+    av=max(len(ed.dropna(subset=["period"])),1)
+    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av))
+
+    default_rc=normalize_color(company_meta.get(META_REVENUE_COLOR),THEME["revenue"])
+    default_oc=normalize_color(company_meta.get(META_OPERATING_PROFIT_COLOR),THEME["profit"])
+    default_mc=normalize_color(company_meta.get(META_MARGIN_COLOR),THEME["margin"])
+
+    c1,c2,c3=st.columns(3)
+    with c1: rc=st.color_picker("売上高カラー",default_rc,key="company_revenue_color")
+    with c2: oc=st.color_picker("営業利益カラー",default_oc,key="company_profit_color")
+    with c3: mc=st.color_picker("営業利益率カラー",default_mc,key="company_margin_color")
+
+    # CSVにカラー指定がある場合はCSVを最優先
+    effective_rc=normalize_color(company_meta.get(META_REVENUE_COLOR),rc)
+    effective_oc=normalize_color(company_meta.get(META_OPERATING_PROFIT_COLOR),oc)
+    effective_mc=normalize_color(company_meta.get(META_MARGIN_COLOR),mc)
+
+    sm=st.checkbox("営業利益率を表示",True)
+    sl=st.checkbox("最新期ラベルを表示",True)
+
+    company_download=company_csv_for_download(
+        ed,csv_currency,csv_unit,effective_rc,effective_oc,effective_mc
+    )
+
+    cdl1,cdl2=st.columns(2)
+    with cdl1:
+        st.download_button(
+            "会社全体CSVをダウンロード",
+            company_download.to_csv(index=False).encode("utf-8-sig"),
+            "company_financials.csv","text/csv",use_container_width=True
+        )
+    with cdl2:
+        generate=st.button("会社全体グラフを生成",type="primary",use_container_width=True)
+
+    if generate:
+        fig,png=company_chart(
+            ed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(n),
+            effective_rc,effective_oc,effective_mc,
+            aspect,cw,ch,sm,sl,dpi,note
+        )
+        st.pyplot(fig,use_container_width=True)
+        st.download_button("PNGをダウンロード",png.getvalue(),"financials.png","image/png")
+
+def seg_tab(kind):
+    if kind=="売上高":
+        vals={
+            "クラウドサービス":np.linspace(110000,315000,len(periods)).astype(int),
+            "プロフェッショナルサービス":np.linspace(50000,210000,len(periods)).astype(int),
+            "ハードウェア":np.linspace(30000,168000,len(periods)).astype(int),
+            "ソフトウェア":np.linspace(25000,105000,len(periods)).astype(int),
+            "その他":np.linspace(10000,42000,len(periods)).astype(int)
+        }
+        title="セグメント別 売上高"; key="rev"
+    else:
+        vals={
+            "クラウドサービス":np.linspace(12000,45000,len(periods)).astype(int),
+            "プロフェッショナルサービス":np.linspace(7000,32000,len(periods)).astype(int),
+            "ハードウェア":np.linspace(5000,28000,len(periods)).astype(int),
+            "ソフトウェア":np.linspace(3500,21000,len(periods)).astype(int),
+            "その他":np.linspace(1500,9000,len(periods)).astype(int)
+        }
+        title="セグメント別 営業利益"; key="op"
+
+    sample_seg=pd.DataFrame({"period":periods,**vals})
+    uploaded_seg=st.file_uploader(
+        "CSVを読み込む（設定列・セグメントカラー列対応）",
+        type=["csv"], key=f"{key}_csv_upload"
+    )
+
+    seg_meta={}
+    seg_source=sample_seg
+    if uploaded_seg is not None:
+        try:
+            loaded, seg_meta=read_uploaded_csv(uploaded_seg)
+            if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
+                seg_source=loaded
+            else:
+                st.error("セグメントCSVには period 列と、1列以上のセグメント列が必要です。")
+        except Exception as e:
+            st.error(str(e))
+
+    csv_currency,csv_mode,csv_unit=resolve_csv_display(
+        seg_meta,currency,mode,unit
+    )
+    if seg_meta:
+        st.caption(
+            f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}"
+        )
+
+    ed=st.data_editor(
+        seg_source,use_container_width=True,num_rows="dynamic",key=key
+    )
+
+    segs=[c for c in ed.columns if c!="period"]
+    st.markdown("**セグメントカラー**")
+    color_cols=st.columns(min(3,max(len(segs),1)))
+    seg_colors={}
+    for i,s in enumerate(segs):
+        csv_color=normalize_color(
+            seg_meta.get(f"{META_SEGMENT_PREFIX}{s}"),
+            THEME["segment_palette"][i%len(THEME["segment_palette"])]
+        )
+        with color_cols[i%len(color_cols)]:
+            picked=st.color_picker(
+                s,csv_color,key=f"color_{key}_{s}"
+            )
+        # CSV指定がある場合はCSVを優先
+        seg_colors[s]=normalize_color(
+            seg_meta.get(f"{META_SEGMENT_PREFIX}{s}"),picked
+        )
+
+    av=max(len(ed.dropna(subset=["period"])),1)
+    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="n"+key)
+    style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key="s"+key)
+    lab=st.checkbox("最新期のデータラベル・前年比を表示",True,key="l"+key)
+
+    seg_download=segment_csv_for_download(
+        ed,csv_currency,csv_unit,seg_colors
+    )
+
+    c1,c2=st.columns(2)
+    with c1:
+        st.download_button(
+            "CSVをダウンロード",
+            seg_download.to_csv(index=False).encode("utf-8-sig"),
+            f"{key}.csv","text/csv",key="csv"+key,use_container_width=True
+        )
+    with c2:
+        generate=st.button(
+            title+"グラフを生成",type="primary",
+            use_container_width=True,key="b"+key
+        )
+
+    if generate:
+        fig,png=segment_chart(
+            ed,company,csv_currency,csv_mode,csv_unit,fx,int(n),style,title,
+            ptype,aspect,cw,ch,lab,dpi,note,seg_colors
+        )
+        st.pyplot(fig,use_container_width=True)
+        st.download_button(
+            "PNGをダウンロード",png.getvalue(),key+".png",
+            "image/png",key="d"+key
+        )
+
+with t2: seg_tab("売上高")
+with t3: seg_tab("利益")
