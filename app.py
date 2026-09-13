@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v48 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v49 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -54,6 +54,7 @@ META_OPERATING_PROFIT_COLOR="__operating_profit_color"
 META_MARGIN_COLOR="__margin_color"  # optional / backward-compatible extension
 META_ORDERS_COLOR="__orders_color"
 META_BACKLOG_COLOR="__backlog_color"
+META_SUBTITLE="__subtitle"
 META_SEGMENT_PREFIX="__color_"
 
 def _first_nonempty(series):
@@ -164,7 +165,7 @@ def add_metadata_columns(df, meta_pairs):
             out.loc[out.index[0], key] = value
     return out
 
-def company_csv_for_download(df, currency, unit, revenue_color, operating_profit_color, margin_color=None):
+def company_csv_for_download(df, currency, unit, revenue_color, operating_profit_color, margin_color=None, subtitle=None):
     meta = {
         META_INPUT_CURRENCY: currency,
         META_DISPLAY_UNIT: unit,
@@ -173,24 +174,30 @@ def company_csv_for_download(df, currency, unit, revenue_color, operating_profit
     }
     if margin_color is not None:
         meta[META_MARGIN_COLOR] = normalize_color(margin_color, THEME["margin"])
+    if subtitle is not None:
+        meta[META_SUBTITLE] = str(subtitle)
     return add_metadata_columns(df, meta)
 
-def orders_csv_for_download(df, currency, unit, orders_color, backlog_color):
+def orders_csv_for_download(df, currency, unit, orders_color, backlog_color, subtitle=None):
     meta = {
         META_INPUT_CURRENCY: currency,
         META_DISPLAY_UNIT: unit,
         META_ORDERS_COLOR: normalize_color(orders_color, THEME["revenue"]),
         META_BACKLOG_COLOR: normalize_color(backlog_color, THEME["profit"]),
     }
+    if subtitle is not None:
+        meta[META_SUBTITLE] = str(subtitle)
     return add_metadata_columns(df, meta)
 
-def segment_csv_for_download(df, currency, unit, segment_colors):
+def segment_csv_for_download(df, currency, unit, segment_colors, subtitle=None):
     meta = {
         META_INPUT_CURRENCY: currency,
         META_DISPLAY_UNIT: unit,
     }
     for segment, color in segment_colors.items():
         meta[f"{META_SEGMENT_PREFIX}{segment}"] = normalize_color(color, "#64748B")
+    if subtitle is not None:
+        meta[META_SUBTITLE] = str(subtitle)
     return add_metadata_columns(df, meta)
 
 def growth(a,b):
@@ -287,7 +294,7 @@ def add_callout(ax,x,y,text,color,offset):
     )
 
 def company_chart(df,company,currency,mode,unit,fx,ptype,n,
-                  rc,oc,mc,aspect,cw,ch,show_margin,show_latest,dpi,note):
+                  rc,oc,mc,aspect,cw,ch,show_margin,show_latest,dpi,note,subtitle):
     df=df.dropna(subset=["period","revenue","operating_profit"]).copy()
     df["period"]=df["period"].astype(str)
     keep=choose_periods(df["period"],n)
@@ -339,12 +346,9 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     # 1 Title / 2 Subtitle / 3 KPI / 4 Chart / 5 Notes
     fig.text(.04,.965,company,fontsize=30,fontweight="bold",
              color=THEME["text"],ha="left",va="top")
-    if periods:
-        fig.text(.91,.965,f"{periods[-1]}（最新）",fontsize=14,fontweight="bold",
-                 color=THEME["text"],ha="right",va="top")
-    subtitle=f"売上高・営業利益・営業利益率の推移（{currency_basis(currency,mode)}）"
-    fig.text(.04,.895,subtitle,fontsize=17,fontweight="bold",
-             color=THEME["muted"],ha="left",va="top")
+    if subtitle and str(subtitle).strip():
+        fig.text(.04,.895,str(subtitle).strip(),fontsize=17,fontweight="bold",
+                 color=THEME["muted"],ha="left",va="top")
 
     if show_latest and len(df):
         lag=4 if ptype=="四半期" else 1
@@ -380,7 +384,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     return fig,buf
 
 def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
-                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note):
+                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note,subtitle):
     df=df.dropna(subset=["period"]).copy()
     df["period"]=df["period"].astype(str)
     keep=choose_periods(df["period"],n)
@@ -417,11 +421,9 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
 
     fig.text(.04,.965,company,fontsize=30,fontweight="bold",
              color=THEME["text"],ha="left",va="top")
-    if periods:
-        fig.text(.91,.965,f"{periods[-1]}（最新）",fontsize=14,fontweight="bold",
-                 color=THEME["text"],ha="right",va="top")
-    fig.text(.04,.895,f"受注高・受注残高の推移（{currency_basis(currency,mode)}）",
-             fontsize=17,fontweight="bold",color=THEME["muted"],ha="left",va="top")
+    if subtitle and str(subtitle).strip():
+        fig.text(.04,.895,str(subtitle).strip(),
+                 fontsize=17,fontweight="bold",color=THEME["muted"],ha="left",va="top")
 
     if show_latest and len(df):
         lag=4 if ptype=="四半期" else 1
@@ -449,7 +451,7 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     return fig,buf
 
 def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
-                  aspect,cw,ch,labels_on,dpi,note,segment_colors):
+                  aspect,cw,ch,labels_on,dpi,note,segment_colors,subtitle):
     raw=df.copy()
     segs=[c for c in raw.columns if c!="period" and not raw[c].isna().all()]
     keep=choose_periods(raw["period"],n)
@@ -517,12 +519,9 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     # Compact title/subtitle -> graph spacing
     fig.text(.035,.965,company,fontsize=38,fontweight="bold",
              color=THEME["text"],ha="left",va="top")
-    if plist:
-        fig.text(.965,.965,f"{plist[-1]}（最新）",fontsize=18,fontweight="bold",
-                 color=THEME["text"],ha="right",va="top")
-    subtitle=f"{title}の推移（{currency_basis(currency,mode)}）"
-    fig.text(.035,.895,subtitle,fontsize=22,fontweight="bold",
-             color=THEME["muted"],ha="left",va="top")
+    if subtitle and str(subtitle).strip():
+        fig.text(.035,.895,str(subtitle).strip(),fontsize=22,fontweight="bold",
+                 color=THEME["muted"],ha="left",va="top")
 
     lag=4 if ptype=="四半期" else 1
 
@@ -601,8 +600,8 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v48 Deploy")
-st.caption("CSV内に入力通貨・表示単位・系列カラーを埋め込める版。CSV指定がある項目は画面設定より優先します。")
+st.title("決算画像ジェネレーター v49 Deploy")
+st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
 
@@ -693,9 +692,11 @@ with t1:
 
     sm=st.checkbox("営業利益率を表示",True)
     sl=st.checkbox("最新期ラベルを表示",True)
+    default_company_subtitle=company_meta.get(META_SUBTITLE) or f"売上高・営業利益・営業利益率の推移（{currency_basis(csv_currency,csv_mode)}）"
+    company_subtitle=st.text_input("サブタイトル",default_company_subtitle,key="company_subtitle")
 
     company_download=company_csv_for_download(
-        ed,csv_currency,csv_unit,effective_rc,effective_oc,effective_mc
+        ed,csv_currency,csv_unit,effective_rc,effective_oc,effective_mc,company_subtitle
     )
 
     cdl1,cdl2=st.columns(2)
@@ -712,7 +713,7 @@ with t1:
         fig,png=company_chart(
             ed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(n),
             effective_rc,effective_oc,effective_mc,
-            aspect,cw,ch,sm,sl,dpi,note
+            aspect,cw,ch,sm,sl,dpi,note,company_subtitle
         )
         st.pyplot(fig,use_container_width=True)
         st.download_button("PNGをダウンロード",png.getvalue(),"financials.png","image/png")
@@ -790,9 +791,11 @@ def seg_tab(kind):
     n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="n"+key)
     style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key="s"+key)
     lab=st.checkbox("最新期のデータラベル・前年比を表示",True,key="l"+key)
+    default_seg_subtitle=seg_meta.get(META_SUBTITLE) or f"{title}の推移（{currency_basis(csv_currency,csv_mode)}）"
+    seg_subtitle=st.text_input("サブタイトル",default_seg_subtitle,key="subtitle_"+key)
 
     seg_download=segment_csv_for_download(
-        ed,csv_currency,csv_unit,seg_colors
+        ed,csv_currency,csv_unit,seg_colors,seg_subtitle
     )
 
     c1,c2=st.columns(2)
@@ -811,7 +814,7 @@ def seg_tab(kind):
     if generate:
         fig,png=segment_chart(
             ed,company,csv_currency,csv_mode,csv_unit,fx,int(n),style,title,
-            ptype,aspect,cw,ch,lab,dpi,note,seg_colors
+            ptype,aspect,cw,ch,lab,dpi,note,seg_colors,seg_subtitle
         )
         st.pyplot(fig,use_container_width=True)
         st.download_button(
@@ -863,9 +866,11 @@ with t4:
     effective_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),orders_color)
     effective_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),backlog_color)
     show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
+    default_orders_subtitle=orders_meta.get(META_SUBTITLE) or f"受注高・受注残高の推移（{currency_basis(csv_currency,csv_mode)}）"
+    orders_subtitle=st.text_input("サブタイトル",default_orders_subtitle,key="orders_subtitle")
 
     orders_download=orders_csv_for_download(
-        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color
+        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color,orders_subtitle
     )
     od1,od2=st.columns(2)
     with od1:
@@ -880,7 +885,7 @@ with t4:
         fig,png=orders_chart(
             oed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(on),
             effective_orders_color,effective_backlog_color,
-            aspect,cw,ch,show_orders_latest,dpi,note
+            aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle
         )
         st.pyplot(fig,use_container_width=True)
         st.download_button("PNGをダウンロード",png.getvalue(),
