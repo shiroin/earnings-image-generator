@@ -1,4 +1,4 @@
-# 決算画像ジェネレーター v46 Deploy
+# 決算画像ジェネレーター v52 Deploy
 
 このフォルダは、そのまま GitHub にアップロードして Streamlit Community Cloud でデプロイできる構成です。
 

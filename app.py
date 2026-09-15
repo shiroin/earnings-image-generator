@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v50 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v51 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -452,7 +452,9 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     return fig,buf
 
 def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
-                  aspect,cw,ch,labels_on,dpi,note,segment_colors,subtitle):
+                  aspect,cw,ch,labels_on,dpi,note,segment_colors,subtitle,
+                  show_total=False,total_name="全社ARR"):
+
     raw=df.copy()
     segs=[c for c in raw.columns if c!="period" and not raw[c].isna().all()]
     keep=choose_periods(raw["period"],n)
@@ -590,9 +592,30 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
                      color=color,
                      bbox=dict(boxstyle="round,pad=.28",fc=color+"18",ec="none"))
 
-    # Give plot some headroom without creating a gap above it.
+    # ARRなどの積み上げグラフでは、最新棒の上に全社合計とYoYを表示できる。
+    if show_total and style=="積み上げ" and len(disp) and segs:
+        total_disp=disp[segs].apply(pd.to_numeric,errors="coerce").fillna(0).sum(axis=1)
+        total_raw=raw[segs].apply(pd.to_numeric,errors="coerce").fillna(0).sum(axis=1)
+        total_yoy=None
+        if len(raw)>lag:
+            total_yoy=growth(total_raw.iloc[-1],total_raw.iloc[-1-lag])
+        if pd.notna(total_disp.iloc[-1]):
+            total_text=f"{total_name}  {fmt(total_disp.iloc[-1])} {unit}"
+            if total_yoy is not None:
+                total_text += f"\nYoY {total_yoy:+.1f}%"
+            ax.annotate(
+                total_text,xy=(x[-1],total_disp.iloc[-1]),xytext=(0,16),
+                textcoords="offset points",ha="center",va="bottom",
+                fontsize=14,fontweight="bold",color="white",linespacing=1.25,
+                bbox=dict(boxstyle="round,pad=.38",fc=THEME["text"],ec=THEME["text"]),
+                arrowprops=dict(arrowstyle="-",color=THEME["text"],lw=1.2),
+                zorder=12,clip_on=False
+            )
+
+    # Give plot extra headroom when a total label is shown above the latest stacked bar.
     ymin,ymax=ax.get_ylim()
-    if ymax>0: ax.set_ylim(ymin,ymax*1.08)
+    if ymax>0:
+        ax.set_ylim(ymin,ymax*(1.18 if show_total and style=="積み上げ" else 1.08))
 
     note_text(fig,note,currency,mode,fx,y=.022)
 
@@ -601,7 +624,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v50 Deploy")
+st.title("決算画像ジェネレーター v52 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
@@ -637,7 +660,7 @@ else:
     periods=[f"FY{y}" for y in range(1997,2027)]
     mx_allowed=30
 
-t1,t2,t3,t4=st.tabs(["会社全体","セグメント売上高","セグメント利益","受注高・受注残高"])
+t1,t2,t3,t4,t5=st.tabs(["会社全体","セグメント売上高","セグメント利益","受注高・受注残高","ARR"])
 
 with t1:
     sample_company=pd.DataFrame({
@@ -892,3 +915,83 @@ with t4:
         st.pyplot(fig,use_container_width=True)
         st.download_button("PNGをダウンロード",png.getvalue(),
                            "orders_backlog.png","image/png",key="download_orders")
+
+
+with t5:
+    # ARRは複数プロダクトを積み上げ表示。CSVは period + 各プロダクト列。
+    sample_arr=pd.DataFrame({
+        "period":periods,
+        "Product A":np.linspace(35,180,len(periods)).round(1),
+        "Product B":np.linspace(20,125,len(periods)).round(1),
+        "Product C":np.linspace(8,72,len(periods)).round(1),
+    })
+    uploaded_arr=st.file_uploader(
+        "ARR CSVを読み込む（period + 各プロダクト列）",
+        type=["csv"],key="arr_csv_upload"
+    )
+    arr_meta={}; arr_source=sample_arr
+    if uploaded_arr is not None:
+        try:
+            loaded,arr_meta=read_uploaded_csv(uploaded_arr)
+            if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
+                arr_source=loaded
+            else:
+                st.error("ARR CSVには period 列と、1列以上のプロダクト列が必要です。")
+        except Exception as e:
+            st.error(str(e))
+
+    csv_currency,csv_mode,csv_unit=resolve_csv_display(arr_meta,currency,mode,unit)
+    if arr_meta:
+        st.caption(f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
+
+    aed=st.data_editor(arr_source,use_container_width=True,num_rows="dynamic",key="arr_editor")
+    aed=normalize_numeric_columns(aed)
+    products=[c for c in aed.columns if c!="period"]
+
+    st.markdown("**プロダクトカラー**")
+    arr_color_cols=st.columns(min(3,max(len(products),1)))
+    arr_colors={}
+    for i,product in enumerate(products):
+        csv_color=normalize_color(
+            arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),
+            THEME["segment_palette"][i%len(THEME["segment_palette"])]
+        )
+        with arr_color_cols[i%len(arr_color_cols)]:
+            picked=st.color_picker(product,csv_color,key=f"arr_color_{product}")
+        arr_colors[product]=normalize_color(
+            arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),picked
+        )
+
+    av=max(len(aed.dropna(subset=["period"])),1)
+    an=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="narr")
+    arr_labels=st.checkbox("プロダクト別の最新ARR・前年比を表示",True,key="arr_latest")
+    arr_total=st.checkbox("全社ARR・YoYを最新の積み上げ棒の上に表示",True,key="arr_total")
+    default_arr_subtitle=arr_meta.get(META_SUBTITLE) or f"プロダクト別 ARRの推移（{currency_basis(csv_currency,csv_mode)}）"
+    arr_subtitle=st.text_input("サブタイトル",default_arr_subtitle,key="arr_subtitle")
+
+    arr_download=segment_csv_for_download(
+        aed,csv_currency,csv_unit,arr_colors,arr_subtitle
+    )
+    ac1,ac2=st.columns(2)
+    with ac1:
+        st.download_button(
+            "ARR CSVをダウンロード",
+            arr_download.to_csv(index=False).encode("utf-8-sig"),
+            "arr.csv","text/csv",key="arr_csv_download",use_container_width=True
+        )
+    with ac2:
+        generate_arr=st.button(
+            "ARRグラフを生成",type="primary",use_container_width=True,key="generate_arr"
+        )
+
+    if generate_arr:
+        fig,png=segment_chart(
+            aed,company,csv_currency,csv_mode,csv_unit,fx,int(an),"積み上げ","プロダクト別 ARR",
+            ptype,aspect,cw,ch,arr_labels,dpi,note,arr_colors,arr_subtitle,
+            show_total=arr_total,total_name="全社ARR"
+        )
+        st.pyplot(fig,use_container_width=True)
+        st.download_button(
+            "PNGをダウンロード",png.getvalue(),"arr.png",
+            "image/png",key="download_arr"
+        )
