@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v49 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v50 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -39,10 +39,11 @@ LOCAL_UNITS={
     "JPY":{"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001},
     "USD":{"百万ドル":1.0,"10億ドル":0.001},
     "EUR":{"100万ユーロ":1.0,"10億ユーロ":0.001},
-    "CNY":{"百万元":1.0,"億元":0.01,"10億元":0.001}
+    "CNY":{"百万元":1.0,"億元":0.01,"10億元":0.001},
+    "DKK":{"百万クローネ":1.0,"10億クローネ":0.001}
 }
 JPY_UNITS={"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001}
-DEFAULT_LOCAL={"JPY":"億円","USD":"10億ドル","EUR":"10億ユーロ","CNY":"億元"}
+DEFAULT_LOCAL={"JPY":"億円","USD":"10億ドル","EUR":"10億ユーロ","CNY":"億元","DKK":"10億クローネ"}
 ASPECTS={"16:9":(16,9),"4:3":(12,9),"3:2":(15,10),"1:1":(10,10),"9:16":(9,16)}
 
 
@@ -242,7 +243,7 @@ def convert(series,currency,mode,unit,fx):
 def currency_basis(currency,mode):
     if mode=="円換算":
         return "円換算"
-    return {"JPY":"円ベース","USD":"USドルベース","EUR":"ユーロベース","CNY":"人民元ベース"}[currency]
+    return {"JPY":"円ベース","USD":"USドルベース","EUR":"ユーロベース","CNY":"人民元ベース","DKK":"デンマーククローネベース"}[currency]
 
 def style_axis(ax, labelsize=17):
     ax.set_facecolor(THEME["bg"])
@@ -600,7 +601,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v49 Deploy")
+st.title("決算画像ジェネレーター v50 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
@@ -608,12 +609,13 @@ ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
 with st.sidebar:
     company=st.text_input("企業名","サンプル株式会社")
     note=st.text_input("注意書き","※ 最新期は会社予想")
-    currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY"])
+    currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY","DKK"])
     mode=st.radio("グラフの通貨表示",["現地通貨","円換算"],horizontal=True)
     usd=st.number_input("USD/JPY",0.01,value=150.0,step=.1)
     eur=st.number_input("EUR/JPY",0.01,value=165.0,step=.1)
     cny=st.number_input("CNY/JPY",0.01,value=21.0,step=.1)
-    fx={"USD":usd,"EUR":eur,"CNY":cny,"JPY":1.0}
+    dkk=st.number_input("DKK/JPY",0.01,value=23.5,step=.1)
+    fx={"USD":usd,"EUR":eur,"CNY":cny,"DKK":dkk,"JPY":1.0}
 
     units=list(JPY_UNITS.keys()) if mode=="円換算" else list(LOCAL_UNITS[currency].keys())
     default="億円" if mode=="円換算" else DEFAULT_LOCAL[currency]
