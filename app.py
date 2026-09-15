@@ -608,13 +608,13 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
 
             if portrait:
                 card_xytext=(0.78, 1.16)
-                total_fs=13
+                total_fs=17
             elif squareish:
                 card_xytext=(0.78, 0.94)
-                total_fs=14
+                total_fs=19
             else:
                 card_xytext=(0.82, 0.93)
-                total_fs=14
+                total_fs=20
 
             ax.annotate(
                 total_text,
@@ -622,7 +622,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
                 xytext=card_xytext, textcoords="axes fraction",
                 ha="center",va="center",fontsize=total_fs,fontweight="bold",
                 color="white",linespacing=1.28,
-                bbox=dict(boxstyle="round,pad=.52",fc=THEME["text"],ec=THEME["text"]),
+                bbox=dict(boxstyle="round,pad=.60",fc=THEME["text"],ec=THEME["text"]),
                 arrowprops=dict(arrowstyle="-",color=THEME["text"],lw=1.4,
                                 connectionstyle="arc3,rad=0"),
                 zorder=12,clip_on=False,annotation_clip=False
@@ -640,7 +640,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v53 Deploy")
+st.title("決算画像ジェネレーター v54 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
