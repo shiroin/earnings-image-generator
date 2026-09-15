@@ -600,16 +600,32 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
         if len(raw)>lag:
             total_yoy=growth(total_raw.iloc[-1],total_raw.iloc[-1-lag])
         if pd.notna(total_disp.iloc[-1]):
-            total_text=f"{total_name}  {fmt(total_disp.iloc[-1])} {unit}"
+            # 全社ARRカードは最新棒の真上ではなく、グラフ右上の専用領域に固定。
+            # 右側のプロダクト別最新値パネルと重ならず、棒とは縦線で接続する。
+            total_text=f"{total_name}\n{fmt(total_disp.iloc[-1])} {unit}"
             if total_yoy is not None:
                 total_text += f"\nYoY {total_yoy:+.1f}%"
+
+            if portrait:
+                card_xytext=(0.78, 1.16)
+                total_fs=13
+            elif squareish:
+                card_xytext=(0.78, 0.94)
+                total_fs=14
+            else:
+                card_xytext=(0.82, 0.93)
+                total_fs=14
+
             ax.annotate(
-                total_text,xy=(x[-1],total_disp.iloc[-1]),xytext=(0,16),
-                textcoords="offset points",ha="center",va="bottom",
-                fontsize=14,fontweight="bold",color="white",linespacing=1.25,
-                bbox=dict(boxstyle="round,pad=.38",fc=THEME["text"],ec=THEME["text"]),
-                arrowprops=dict(arrowstyle="-",color=THEME["text"],lw=1.2),
-                zorder=12,clip_on=False
+                total_text,
+                xy=(x[-1],total_disp.iloc[-1]), xycoords="data",
+                xytext=card_xytext, textcoords="axes fraction",
+                ha="center",va="center",fontsize=total_fs,fontweight="bold",
+                color="white",linespacing=1.28,
+                bbox=dict(boxstyle="round,pad=.52",fc=THEME["text"],ec=THEME["text"]),
+                arrowprops=dict(arrowstyle="-",color=THEME["text"],lw=1.4,
+                                connectionstyle="arc3,rad=0"),
+                zorder=12,clip_on=False,annotation_clip=False
             )
 
     # Give plot extra headroom when a total label is shown above the latest stacked bar.
@@ -624,7 +640,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v52 Deploy")
+st.title("決算画像ジェネレーター v53 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
