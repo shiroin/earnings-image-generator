@@ -1,17 +1,27 @@
-# IR Webcast Transcriber v13
+# IR Webcast Transcriber v14 — SmartVision IR対応
 
-Streamlit Cloud向けのIR Webcast文字起こしアプリです。
+Streamlit Cloud向け。文字起こしはOpenAI APIを使い、ローカルWhisperはロードしません。
 
-## v13の変更点
-- VimeoのDASH/range配信で `trun track id unknown` / `no tfhd was found` が出るケースを修正。
-- VimeoではCDNのrange断片URLをffmpegへ直接渡しません。
-- `yt-dlp` のnative downloaderでHTTP/DASH/HLS断片をまずローカルへ完全取得・結合し、その完成済みローカルファイルをffmpegでMP3化します。
-- YouTube / M3U8 / TS / MP3・MP4 / IR Webcasting / 一般IRページ / OpenAI文字起こしAPIの既存機能は維持しています。
+## v14の追加点
+- SmartVision IR / iVision系を想定した **iframe再帰探索** を追加
+- 親IRページ → iframe → player HTML / JS / JSON設定 → `.m3u8` / `.mp4` / `.mp3` を探索
+- メディアURLがHTMLから取れない場合、iframe player URLを `yt-dlp` でも試行
+- 一般IR動画ページから企業名・決算期・説明会日をbest-effort自動入力
+- v13のVimeo native downloader修正を維持
+
+## 対応
+YouTube / Vimeo / SmartVision IR / IR Webcasting / m3u8 / ts / mp3・m4a / mp4 / 一般IRページ
 
 ## Streamlit Cloud
-- Python 3.11推奨
-- Secretsに `OPENAI_API_KEY = "..."` を設定
-- `packages.txt` により ffmpeg を導入
+リポジトリ直下に `app.py`, `requirements.txt`, `packages.txt`, `README.md` を置き、Python 3.11を選択してください。
+Secrets:
 
-## Vimeoの注意
-公開動画を主対象にしています。ログイン必須、パスワード付き、埋め込み先限定、DRM等は取得できない場合があります。
+```toml
+OPENAI_API_KEY = "sk-..."
+```
+
+## SmartVisionの使い方
+一覧ページではなく、原則として **個別の決算説明会動画ページURL** を貼るのが最も確実です。
+SmartVisionは企業サイトに直接埋め込まれる構成があるため、v14はiframeとプレイヤー設定を追跡します。
+
+Cookie / ログイン / 署名付きセッション / DRMが必要な配信は自動取得できない場合があります。その場合のみDevTools Networkで `.m3u8` / `.mp4` 等を取得してください。

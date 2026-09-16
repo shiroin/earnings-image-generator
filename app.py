@@ -12,9 +12,9 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 
-st.set_page_config(page_title="IR Webcast Transcriber v13", page_icon="🎧", layout="centered")
-st.title("🎧 IR Webcast Transcriber v13")
-st.caption("音声取得はStreamlit、文字起こしは外部API。YouTube / Vimeo / MP3 / M3U8 / TS / IR webcastページ / IR Webcasting、英・中・韓・日に対応。")
+st.set_page_config(page_title="IR Webcast Transcriber v14", page_icon="🎧", layout="centered")
+st.title("🎧 IR Webcast Transcriber v14")
+st.caption("音声取得はStreamlit、文字起こしは外部API。YouTube / Vimeo / SmartVision IR / MP3 / M3U8 / TS / IR webcastページ / IR Webcasting、英・中・韓・日に対応。")
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/151 Safari/537.36"
 OPENAI_TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -304,11 +304,108 @@ def discover_irwebcasting_media(page_url):
     return sorted(unique, key=score)
 
 
+def is_smartvision_url(url):
+    """SmartVision IR / iVision系のプレイヤー・配信URLをbest-effort判定。"""
+    host = urlparse(url).netloc.lower()
+    low = url.lower()
+    return (
+        "ivision.ne.jp" in host
+        or "smartvision" in low
+        or "smart-vision" in low
+    )
+
+
+def extract_generic_ir_metadata(page_url):
+    """一般的な日本企業IR動画ページから企業名・決算期をbest-effort抽出。"""
+    try:
+        r = requests.get(page_url, headers={"User-Agent": UA}, timeout=20)
+        r.raise_for_status()
+    except Exception:
+        return {"company": "", "period": "", "date": ""}
+    soup = BeautifulSoup(r.text, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    text = "\n".join(soup.stripped_strings)
+    company = ""
+    # title末尾のサイト名を落とす。完全自動化より誤入力回避を優先するbest-effort。
+    if "サンリオ" in title or "サンリオ" in text[:3000]:
+        company = "サンリオ"
+    else:
+        m = re.search(r"(?:株式会社\s*)?([^|｜\-]{2,40}(?:株式会社|Inc\.|Corporation|Ltd\.))", title)
+        if m: company = m.group(1).strip()
+    period = ""
+    m = re.search(r"(20\d{2}年\s*\d{1,2}月期\s*(?:第?\s*[1-4１-４]四半期|通期|上期|下期)?)", text)
+    if m: period = re.sub(r"\s+", " ", m.group(1)).strip()
+    event_date = ""
+    m = re.search(r"(20\d{2})年\s*(\d{1,2})月\s*(\d{1,2})日", text)
+    if m: event_date = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return {"company": company, "period": period, "date": event_date}
+
+
+def discover_nested_player_media(page_url, max_depth=2):
+    """SmartVisionのようなiframe/JS埋め込みプレイヤーを浅く再帰探索する。
+
+    親IRページ -> iframe -> player HTML/config/JS -> m3u8/mp4/mp3 の順で探索。
+    Cookie/session/DRMが必要な配信は対象外。
+    """
+    session = requests.Session()
+    session.headers.update({"User-Agent": UA})
+    queue = [(page_url, 0, page_url)]
+    seen = set()
+    media = []
+    player_pages = []
+    while queue and len(seen) < 40:
+        current, depth, referer = queue.pop(0)
+        if current in seen: continue
+        seen.add(current)
+        try:
+            rr = session.get(current, headers={"Referer": referer}, timeout=15)
+            if rr.status_code >= 400 or len(rr.content) > 6_000_000:
+                continue
+        except requests.RequestException:
+            continue
+        ctype=(rr.headers.get("content-type") or "").lower()
+        if "mpegurl" in ctype or rr.text.lstrip().startswith("#EXTM3U"):
+            media.append(current); continue
+        text=rr.text.replace("\\/", "/")
+        media += _media_urls_from_text(text, current)
+        if depth >= max_depth: continue
+        soup=BeautifulSoup(text, "html.parser")
+        links=[]
+        for tag in soup.find_all(["iframe","script","source","video","audio"]):
+            for attr in ("src","data-src","data-url","data-file","data-movie","data-player-url"):
+                v=tag.get(attr)
+                if not v: continue
+                full=urljoin(current,v)
+                if kind(full): media.append(full)
+                elif full.startswith("http"):
+                    links.append(full)
+                    if tag.name == "iframe": player_pages.append(full)
+        # JSON/config URLも拾う。SmartVision実装差分への保険。
+        for v in re.findall(r'["\']([^"\']+\.(?:json|js)(?:\?[^"\']*)?)["\']', text, re.I):
+            links.append(urljoin(current,v))
+        for full in links[:25]:
+            if full not in seen:
+                queue.append((full, depth+1, current))
+    unique=[]
+    for x in media:
+        if x not in unique: unique.append(x)
+    def score(x):
+        lx=x.lower()
+        if ".m3u8" in lx: return 0
+        if re.search(r"\.(mp3|m4a|aac)",lx): return 1
+        return 2
+    return sorted(unique,key=score), player_pages
+
+
 def discover_media(page_url):
     if is_irwebcasting(page_url):
         special = discover_irwebcasting_media(page_url)
         if special:
             return special
+    # SmartVision等のiframe埋め込みを先に再帰探索。
+    nested, _player_pages = discover_nested_player_media(page_url, max_depth=2)
+    if nested:
+        return nested
     r = requests.get(page_url, headers={"User-Agent": UA}, timeout=25)
     r.raise_for_status()
     html = r.text.replace("\\/", "/")
@@ -443,6 +540,14 @@ if url.strip() and is_irwebcasting(url.strip()):
         st.caption("IR Webcastingを検出：企業名・決算期・説明会日を自動取得します。")
     except Exception as e:
         st.caption(f"IR Webcastingのタグ自動取得に失敗しました（手入力は可能です）: {e}")
+elif url.strip():
+    # SmartVisionを含む一般IR動画ページでもタグをbest-effort取得。
+    try:
+        auto_meta = extract_generic_ir_metadata(url.strip())
+        if any(auto_meta.values()):
+            st.caption("IR動画ページから企業名・決算期などを自動取得しました（必要なら修正できます）。")
+    except Exception:
+        pass
 
 st.subheader("決算説明会タグ")
 m1, m2 = st.columns(2)
@@ -554,25 +659,45 @@ if st.button("文字起こし開始", type="primary", use_container_width=True):
                 audio = ffmpeg_get(url, audio)
                 source = source_kind.upper()
             else:
-                status.info("IR Webcasting / IRページ内の音声URLを探索中…")
-                candidates = discover_media(url)
-                if not candidates:
+                status.info("IR Webcasting / SmartVision / IRページ内の音声URLを探索中…")
+                nested_candidates, player_pages = discover_nested_player_media(url, max_depth=2)
+                candidates = nested_candidates or discover_media(url)
+                if not candidates and player_pages and yt_dlp_available():
+                    # プレイヤーHTML自体をyt-dlpが解決できる実装へのフォールバック。
+                    last_player_error = None
+                    for player_url in player_pages[:5]:
+                        try:
+                            status.info("SmartVision系プレイヤーをyt-dlpで解析中…")
+                            audio = yt_dlp_audio_get(player_url, audio)
+                            source = "SmartVision/iframe → yt-dlp"
+                            break
+                        except Exception as e:
+                            last_player_error = e
+                    else:
+                        st.error("SmartVision/IRページからメディアを自動検出できませんでした。")
+                        if last_player_error:
+                            st.code(str(last_player_error))
+                        st.info("Cookie・署名URL・DRM型の場合は、DevToolsのNetworkから m3u8 / mp3 / mp4 を取得して貼ってください。")
+                        st.stop()
+                    candidates = []
+                elif not candidates:
                     st.error("自動検出できませんでした。JavaScript / Cookie / 認証型の可能性があります。")
                     st.info("この場合だけDevToolsのNetworkから m3u8 / mp3 / mp4 / ts を取得して貼ってください。")
                     st.stop()
-                with st.expander("検出したメディアURL"):
-                    for x in candidates[:20]:
-                        st.code(x)
-                last_error = None
-                for x in candidates[:10]:
-                    try:
-                        audio = ffmpeg_get(x, audio)
-                        source = "IRページ → " + (kind(x) or "media").upper()
-                        break
-                    except Exception as e:
-                        last_error = e
-                else:
-                    raise RuntimeError("候補は見つかりましたが音声取得に失敗しました。\n" + str(last_error))
+                if candidates:
+                    with st.expander("検出したメディアURL"):
+                        for x in candidates[:20]:
+                            st.code(x)
+                    last_error = None
+                    for x in candidates[:10]:
+                        try:
+                            audio = ffmpeg_get(x, audio)
+                            source = "IRページ → " + (kind(x) or "media").upper()
+                            break
+                        except Exception as e:
+                            last_error = e
+                    else:
+                        raise RuntimeError("候補は見つかりましたが音声取得に失敗しました。\n" + str(last_error))
 
             duration = get_duration_seconds(audio)
             status.info(f"{source}: 音声取得完了（約{duration/60:.1f}分）。外部APIで文字起こし中…")
@@ -624,9 +749,10 @@ if st.button("文字起こし開始", type="primary", use_container_width=True):
         st.error("処理に失敗しました。")
         st.code(str(e))
 
-with st.expander("v11のポイント"):
+with st.expander("v14のポイント"):
     st.markdown("""
-- **IR Webcasting (`irwebcasting.com`) 専用解析**を追加。HTMLだけでなくプレイヤー設定・参照JS内のメディアURLも探索します。
+- **SmartVision IR / iframe埋め込み**を追加。親IRページ→iframe→プレイヤーHTML/JS/設定→m3u8/mp4/mp3を浅く再帰探索します。
+- **IR Webcasting (`irwebcasting.com`) 専用解析**も継続。
 - IR Webcastingでは **企業名・決算期・説明会日を自動入力**します。
 - Streamlit Cloud上では **Whisperモデルを一切ロードしません**。
 - 取得した音声を12分ごとの軽量MP3に分割し、1本ずつ文字起こしAPIへ送信します。
