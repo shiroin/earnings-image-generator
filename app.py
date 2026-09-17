@@ -1,6 +1,7 @@
 
 import io
 import re
+import unicodedata
 import requests
 import numpy as np
 import pandas as pd
@@ -349,13 +350,36 @@ def master_meta(settings, section):
                     meta[f"{META_SEGMENT_PREFIX}{k[len(prefix):]}"] = v
     return meta
 
+def _name_key(value):
+    """Excel/Sheets由来の表記ゆれを吸収する比較キー。表示文字列自体は変更しない。"""
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    # 改行・NBSP・全角空白を通常空白へ寄せ、連続空白を1つにする。
+    text = text.replace("\u00a0", " ").replace("\u3000", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.casefold()
+
 def master_display_names(settings, section):
-    """設定シートの表示名を、データ列名 -> 画像上の表示名として返す。"""
+    """設定シートの表示名を正規化キー -> 画像上の表示名として返す。
+
+    データ列名と設定の項目名に、大文字小文字・全角半角・余分な空白などの
+    軽微な差があっても表示名を適用できるようにする。
+    """
     if not settings:
         return {}
     prefix = "arr_display:" if section == "arr" else "segment_display:"
-    return {k[len(prefix):]: str(v).strip() for k,v in settings.items()
-            if k.startswith(prefix) and k[len(prefix):] and str(v).strip()}
+    result = {}
+    for k, v in settings.items():
+        if not k.startswith(prefix):
+            continue
+        item = k[len(prefix):]
+        display = str(v).strip() if v is not None else ""
+        if item and display:
+            result[_name_key(item)] = display
+    return result
+
+def display_name_for(display_names, raw_name):
+    """設定された表示名を返し、未設定時のみ元の列名へフォールバック。"""
+    return display_names.get(_name_key(raw_name), str(raw_name))
 
 def resolve_csv_display(meta, fallback_currency, fallback_mode, fallback_unit):
     """CSVの通貨・表示単位があれば優先。表示モードは表示単位から自動判定。"""
@@ -716,7 +740,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
         for i,s in enumerate(segs):
             vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
             bottoms=np.where(vals>=0,pos,neg)
-            ax.bar(x,vals,bottom=bottoms,width=.68,color=colors[i],label=display_names.get(s,s),zorder=3)
+            ax.bar(x,vals,bottom=bottoms,width=.68,color=colors[i],label=display_name_for(display_names,s),zorder=3)
             if len(disp): latest_positions.append((s,vals[-1],bottoms[-1]+vals[-1]/2,colors[i]))
             pos+=np.where(vals>=0,vals,0); neg+=np.where(vals<0,vals,0)
     else:
@@ -725,7 +749,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
         for i,s in enumerate(segs):
             vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
             xpos=x+offsets[i]
-            ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=display_names.get(s,s),zorder=3)
+            ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=display_name_for(display_names,s),zorder=3)
             if len(disp): latest_positions.append((s,vals[-1],vals[-1],colors[i]))
 
     plist=disp["period"].astype(str).tolist()
@@ -875,7 +899,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v71 Deploy")
+st.title("決算画像ジェネレーター v78 Deploy")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -1142,7 +1166,7 @@ def seg_tab(kind):
         )
         with color_cols[i%len(color_cols)]:
             picked=st.color_picker(
-                seg_display_names.get(s,s),csv_color,key=f"color_{key}_{s}"
+                display_name_for(seg_display_names,s),csv_color,key=f"color_{key}_{s}"
             )
         # CSV指定がある場合はCSVを優先
         seg_colors[s]=normalize_color(
@@ -1300,7 +1324,7 @@ with t5:
             THEME["segment_palette"][i%len(THEME["segment_palette"])]
         )
         with arr_color_cols[i%len(arr_color_cols)]:
-            picked=st.color_picker(arr_display_names.get(product,product),csv_color,key=f"arr_color_{product}")
+            picked=st.color_picker(display_name_for(arr_display_names,product),csv_color,key=f"arr_color_{product}")
         arr_colors[product]=normalize_color(
             arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),picked
         )
