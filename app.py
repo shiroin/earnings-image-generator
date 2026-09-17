@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v65 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v66 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -848,8 +848,24 @@ ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
 with st.sidebar:
     company=st.text_input("企業名",master_settings.get("company_name","サンプル株式会社"))
     note=st.text_input("注意書き",master_settings.get("note","※ 最新期は会社予想"))
-    currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"])
-    mode=st.radio("グラフの通貨表示",["現地通貨","円換算"],horizontal=True)
+
+    currency_options=["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"]
+    master_currency=str(master_settings.get("input_currency","JPY")).upper()
+    if master_currency not in currency_options:
+        master_currency="JPY"
+    currency=st.selectbox("CSVの入力通貨",currency_options,index=currency_options.index(master_currency))
+
+    # マスターの display_unit をUI初期値にも反映する。
+    # 外貨で「億ドル」等なら現地通貨、「億円」等なら円換算を自動選択。
+    master_display_unit=str(master_settings.get("display_unit","") or "").strip()
+    if currency=="JPY":
+        master_mode="現地通貨"
+    elif master_display_unit in JPY_UNITS:
+        master_mode="円換算"
+    else:
+        master_mode="現地通貨"
+    mode_options=["現地通貨","円換算"]
+    mode=st.radio("グラフの通貨表示",mode_options,index=mode_options.index(master_mode),horizontal=True)
     usd=st.number_input("USD/JPY",0.01,value=150.0,step=.1)
     eur=st.number_input("EUR/JPY",0.01,value=165.0,step=.1)
     cny=st.number_input("CNY/JPY",0.01,value=21.0,step=.1)
@@ -864,7 +880,10 @@ with st.sidebar:
 
     units=list(JPY_UNITS.keys()) if mode=="円換算" else list(LOCAL_UNITS[currency].keys())
     default="億円" if mode=="円換算" else DEFAULT_LOCAL[currency]
-    unit=st.selectbox("表示単位",units,index=units.index(default))
+    # 設定シートの display_unit が現在の通貨/表示モードで有効なら最優先。
+    # 例: input_currency=USD, display_unit=億ドル → UIも億ドルで開始。
+    preferred_unit=master_display_unit if master_display_unit in units else default
+    unit=st.selectbox("表示単位",units,index=units.index(preferred_unit))
 
     aspect=st.selectbox("縦横比",["1:1","16:9","4:3","3:2","9:16","カスタム"])
     cw,ch=16.0,9.0
