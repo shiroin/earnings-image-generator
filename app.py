@@ -445,7 +445,7 @@ def note_text(fig, note, currency, mode, fx, y=0.025):
         parts.append(f"換算レート：1 {currency} = {fx[currency]:g} 円")
     if parts:
         fig.text(0.06,y,"　".join(parts),ha="left",va="bottom",
-                 fontsize=18,color=THEME["muted"])
+                 fontsize=12.5,color=THEME["muted"])
 
 def add_kpi_card(fig,x,y,w,h,title,value,delta,color,bg):
     fig.patches.append(FancyBboxPatch(
@@ -539,7 +539,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     leg.get_frame().set_edgecolor(THEME["card_border"])
 
     # 1 Title / 2 Subtitle / 3 KPI / 4 Chart / 5 Notes
-    fig.text(.04,.965,company,fontsize=30,fontweight="bold",
+    fig.text(.04,.965,company,fontsize=36,fontweight="bold",
              color=THEME["text"],ha="left",va="top")
     if subtitle and str(subtitle).strip():
         fig.text(.04,.895,str(subtitle).strip(),fontsize=17,fontweight="bold",
@@ -570,8 +570,8 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     if ax2 is not None: ax2.set_ylim(0,max(10,np.nanmax(margin)*1.35))
 
     # Graph band leaves a dedicated note band below it.
-    plt.subplots_adjust(left=.08,right=.92,bottom=.16,top=.65)
-    note_text(fig,note,currency,mode,fx,y=.025)
+    plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
+    note_text(fig,note,currency,mode,fx,y=.022)
 
     buf=io.BytesIO()
     fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
@@ -892,6 +892,8 @@ with st.sidebar:
     # マスターの display_unit をUI初期値にも反映する。
     # 外貨で「億ドル」等なら現地通貨、「億円」等なら円換算を自動選択。
     master_display_unit=str(master_settings.get("display_unit","") or "").strip()
+    if master_display_unit == "億（現地通貨）":
+        master_display_unit = DEFAULT_LOCAL.get(currency, "億円")
     if currency=="JPY":
         master_mode="現地通貨"
     elif master_display_unit in JPY_UNITS:
@@ -994,7 +996,7 @@ with t1:
 
     sm=st.checkbox("営業利益率を表示",True)
     sl=st.checkbox("最新期ラベルを表示",True)
-    default_company_subtitle=company_meta.get(META_SUBTITLE) or f"売上高・営業利益・営業利益率の推移（{currency_basis(csv_currency,csv_mode)}）"
+    default_company_subtitle=company_meta.get(META_SUBTITLE) or ("四半期業績" if ptype=="四半期" else "年度業績")
     company_subtitle=st.text_input("サブタイトル",default_company_subtitle,key="company_subtitle")
 
     company_download=company_csv_for_download(
