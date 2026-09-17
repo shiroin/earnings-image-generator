@@ -1190,7 +1190,7 @@ with t4:
     effective_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),orders_color)
     effective_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),backlog_color)
     show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
-    default_orders_subtitle=orders_meta.get(META_SUBTITLE) or f"受注高・受注残高の推移（{currency_basis(csv_currency,csv_mode)}）"
+    default_orders_subtitle=orders_meta.get(META_SUBTITLE) or "受注高・受注残高の推移"
     orders_subtitle=st.text_input("サブタイトル",default_orders_subtitle,key="orders_subtitle")
 
     orders_download=orders_csv_for_download(
@@ -1268,7 +1268,7 @@ with t5:
     an=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="narr")
     arr_labels=st.checkbox("プロダクト別の最新ARR・前年比を表示",True,key="arr_latest")
     arr_total=st.checkbox("全社ARR・YoYを最新の積み上げ棒の上に表示",True,key="arr_total")
-    default_arr_subtitle=arr_meta.get(META_SUBTITLE) or f"プロダクト別 ARRの推移（{currency_basis(csv_currency,csv_mode)}）"
+    default_arr_subtitle=arr_meta.get(META_SUBTITLE) or "ARRの推移"
     arr_subtitle=st.text_input("サブタイトル",default_arr_subtitle,key="arr_subtitle")
 
     arr_download=segment_csv_for_download(
