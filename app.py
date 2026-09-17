@@ -296,7 +296,16 @@ def master_meta(settings, section):
         "company":"company_subtitle", "segment_revenue":"segment_revenue_subtitle",
         "segment_profit":"segment_profit_subtitle", "orders":"orders_subtitle", "arr":"arr_subtitle"
     }[section]
-    if settings.get(subtitle_key): meta[META_SUBTITLE]=settings[subtitle_key]
+    if settings.get(subtitle_key):
+        subtitle = str(settings[subtitle_key]).strip()
+        # v75: 旧マスターに残っていた既知の誤デフォルトを正規化する。
+        # それ以外のユーザー指定サブタイトルはそのまま尊重する。
+        legacy_subtitle_fixes = {
+            "セグメント別 売上高の推": "セグメント別 売上高の推移",
+            "セグメント別 営業利益の推移（円ベース）": "セグメント別 営業利益の推移",
+            "セグメント別 営業利益の推移 (円ベース)": "セグメント別 営業利益の推移",
+        }
+        meta[META_SUBTITLE] = legacy_subtitle_fixes.get(subtitle, subtitle)
     if section=="company":
         for mk,sk in [(META_REVENUE_COLOR,"revenue_color"),(META_OPERATING_PROFIT_COLOR,"operating_profit_color"),(META_MARGIN_COLOR,"margin_color")]:
             if settings.get(sk): meta[mk]=settings[sk]
@@ -893,6 +902,18 @@ elif master_sheets:
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
 
+# v76: 期間区分を切り替えたら、会社全体のサブタイトルも必ず連動させる。
+# text_input は同じ key の値を session_state に保持するため、
+# モード変更を検知して widget 描画前に値を更新する。
+_mode_subtitle = "四半期業績" if ptype == "四半期" else "年度業績"
+_prev_ptype = st.session_state.get("_company_subtitle_ptype")
+if _prev_ptype is None:
+    # 初回表示も期間区分に対応した標準タイトルを使う。
+    st.session_state["company_subtitle"] = _mode_subtitle
+elif _prev_ptype != ptype:
+    st.session_state["company_subtitle"] = _mode_subtitle
+st.session_state["_company_subtitle_ptype"] = ptype
+
 with st.sidebar:
     company=st.text_input("企業名",master_settings.get("company_name","サンプル株式会社"))
     note=st.text_input("注意書き",master_settings.get("note","※ 最新期は会社予想"))
@@ -1010,7 +1031,9 @@ with t1:
 
     sm=st.checkbox("営業利益率を表示",True)
     sl=st.checkbox("最新期ラベルを表示",True)
-    default_company_subtitle=company_meta.get(META_SUBTITLE) or ("四半期業績の推移" if ptype=="四半期" else "年度業績の推移")
+    # v76: UIの「四半期 / 年度」と会社全体サブタイトルを同期。
+    # モード切替時は上で session_state を更新するため、古い入力値が残らない。
+    default_company_subtitle = "四半期業績" if ptype == "四半期" else "年度業績"
     company_subtitle=st.text_input("サブタイトル",default_company_subtitle,key="company_subtitle")
 
     company_download=company_csv_for_download(
