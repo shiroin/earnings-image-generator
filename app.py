@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v57 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v62 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -160,6 +160,31 @@ def master_period_key(section, ptype):
     suffix = "quarterly" if ptype == "四半期" else "annual"
     return f"{section}_{suffix}"
 
+def _read_master_sheet_auto(xls, sheet_name, required_header):
+    """マスターシートの見出し行を自動検出して読む。
+
+    Google Sheets上で空行が削除・追加されても、固定の header=3 に依存しない。
+    required_header は "period" または "setting"。データ行が0件でも安全に扱う。
+    """
+    raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+    if raw.empty:
+        return pd.DataFrame()
+    header_row = None
+    target = str(required_header).strip()
+    for i in range(min(len(raw), 20)):
+        vals = [str(v).strip() for v in raw.iloc[i].tolist() if pd.notna(v)]
+        if target in vals:
+            header_row = i
+            break
+    if header_row is None:
+        return pd.DataFrame()
+    df = pd.read_excel(xls, sheet_name=sheet_name, header=header_row)
+    df = df.dropna(how="all")
+    # 完全空列や Unnamed 列は除外。ただし設定シート右側の可変カラーテーブルは保持する。
+    keep = [c for c in df.columns if not (str(c).startswith("Unnamed:") and df[c].isna().all())]
+    return df[keep] if keep else pd.DataFrame()
+
+
 def read_master_excel(uploaded):
     """1社1ファイルのExcelマスターを読み込む。Google Sheetsから取得したxlsx bytesにも対応。"""
     if uploaded is None:
@@ -172,15 +197,13 @@ def read_master_excel(uploaded):
 
     settings = {}
     if "設定" in xls.sheet_names:
-        cfg = pd.read_excel(xls, sheet_name="設定", header=3)
+        cfg = _read_master_sheet_auto(xls, "設定", "setting")
         if {"setting","value"}.issubset(cfg.columns):
             for _, row in cfg.iterrows():
                 k=row.get("setting"); v=row.get("value")
                 if pd.notna(k) and str(k).strip() and pd.notna(v) and str(v).strip():
                     settings[str(k).strip()] = str(v).strip()
 
-        # v59: 設定シート右側の「種類 / 項目名 / カラー」テーブルを読む。
-        # セグメント色は売上高・利益で共通、ARRはプロダクトごとに設定。
         if {"種類","項目名","カラー"}.issubset(cfg.columns):
             for _, row in cfg.iterrows():
                 kind=row.get("種類"); item=row.get("項目名"); color=row.get("カラー")
@@ -197,10 +220,13 @@ def read_master_excel(uploaded):
     sheets = {}
     for key, sheet_name in MASTER_SHEETS.items():
         if sheet_name in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet_name, header=3)
-            df = df.dropna(how="all")
-            if len(df):
-                sheets[key] = normalize_numeric_columns(df)
+            df = _read_master_sheet_auto(xls, sheet_name, "period")
+            if "period" in df.columns and len(df):
+                df = normalize_numeric_columns(df)
+                # periodだけで実データがない空テンプレートは読み込み済みデータとして扱わない
+                value_cols = [c for c in df.columns if c != "period"]
+                if value_cols and df[value_cols].notna().any().any():
+                    sheets[key] = df
     return sheets, settings
 
 def google_sheet_id(url):
@@ -845,10 +871,11 @@ with st.sidebar:
     dpi=st.select_slider("解像度",[120,180,220,300],value=220)
 
 if ptype=="四半期":
-    periods=["2022/3","2022/6","2022/9","2022/12","2023/3","2023/6","2023/9","2023/12",
-             "2024/3","2024/6","2024/9","2024/12","2025/3","2025/6","2025/9","2025/12",
-             "2026/3","2026/6","2026/9","2026/12"]
-    mx_allowed=20
+    periods=["2019/9","2019/12","2020/3","2020/6","2020/9","2020/12",
+             "2021/3","2021/6","2021/9","2021/12","2022/3","2022/6","2022/9","2022/12",
+             "2023/3","2023/6","2023/9","2023/12","2024/3","2024/6","2024/9","2024/12",
+             "2025/3","2025/6","2025/9","2025/12","2026/3","2026/6","2026/9","2026/12"]
+    mx_allowed=30
 else:
     periods=[f"FY{y}" for y in range(1997,2027)]
     mx_allowed=30
@@ -893,7 +920,7 @@ with t1:
     ed=st.data_editor(company_source,use_container_width=True,num_rows="dynamic",key="company_editor")
     ed=normalize_numeric_columns(ed)
     av=max(len(ed.dropna(subset=["period"])),1)
-    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av))
+    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av))
 
     default_rc=normalize_color(company_meta.get(META_REVENUE_COLOR),THEME["revenue"])
     default_oc=normalize_color(company_meta.get(META_OPERATING_PROFIT_COLOR),THEME["profit"])
@@ -1009,7 +1036,7 @@ def seg_tab(kind):
         )
 
     av=max(len(ed.dropna(subset=["period"])),1)
-    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="n"+key)
+    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="n"+key)
     style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key="s"+key)
     lab=st.checkbox("最新期のデータラベル・前年比を表示",True,key="l"+key)
     default_seg_subtitle=seg_meta.get(META_SUBTITLE) or f"{title}の推移（{currency_basis(csv_currency,csv_mode)}）"
@@ -1077,7 +1104,7 @@ with t4:
     oed=st.data_editor(orders_source,use_container_width=True,num_rows="dynamic",key="orders_editor")
     oed=normalize_numeric_columns(oed)
     av=max(len(oed.dropna(subset=["period"])),1)
-    on=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="norders")
+    on=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="norders")
 
     default_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),THEME["revenue"])
     default_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),THEME["profit"])
@@ -1163,7 +1190,7 @@ with t5:
         )
 
     av=max(len(aed.dropna(subset=["period"])),1)
-    an=st.number_input("表示する期間数",1,min(mx_allowed,av),min(mx_allowed,av),key="narr")
+    an=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="narr")
     arr_labels=st.checkbox("プロダクト別の最新ARR・前年比を表示",True,key="arr_latest")
     arr_total=st.checkbox("全社ARR・YoYを最新の積み上げ棒の上に表示",True,key="arr_total")
     default_arr_subtitle=arr_meta.get(META_SUBTITLE) or f"プロダクト別 ARRの推移（{currency_basis(csv_currency,csv_mode)}）"
