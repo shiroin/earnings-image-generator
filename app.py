@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v62 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v64 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -37,21 +37,24 @@ THEME = {
                        "#0EA5E9","#84CC16","#D946EF","#64748B"]
 }
 
+# マスターの財務数値は、特記がない限り「百万通貨単位」で入力する前提。
+# 例: JPY=百万円、USD=百万ドル、CNY=百万元、EUR=百万ユーロ。
+# したがって百万→億は x0.01、百万→10億は x0.001 で表示変換する。
 LOCAL_UNITS={
     "JPY":{"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001},
-    "USD":{"百万ドル":1.0,"10億ドル":0.001},
-    "EUR":{"100万ユーロ":1.0,"10億ユーロ":0.001},
+    "USD":{"百万ドル":1.0,"億ドル":0.01,"10億ドル":0.001},
+    "EUR":{"百万ユーロ":1.0,"億ユーロ":0.01,"10億ユーロ":0.001},
     "CNY":{"百万元":1.0,"億元":0.01,"10億元":0.001},
-    "DKK":{"百万クローネ":1.0,"10億クローネ":0.001},
-    "KRW":{"百万ウォン":1.0,"10億ウォン":0.001},
-    "NOK":{"百万クローネ":1.0,"10億クローネ":0.001},
-    "SEK":{"百万クローナ":1.0,"10億クローナ":0.001},
-    "CHF":{"百万スイスフラン":1.0,"10億スイスフラン":0.001},
-    "TWD":{"百万台湾ドル":1.0,"10億台湾ドル":0.001},
-    "HKD":{"百万香港ドル":1.0,"10億香港ドル":0.001}
+    "DKK":{"百万クローネ":1.0,"億クローネ":0.01,"10億クローネ":0.001},
+    "KRW":{"百万ウォン":1.0,"億ウォン":0.01,"10億ウォン":0.001},
+    "NOK":{"百万クローネ":1.0,"億クローネ":0.01,"10億クローネ":0.001},
+    "SEK":{"百万クローナ":1.0,"億クローナ":0.01,"10億クローナ":0.001},
+    "CHF":{"百万スイスフラン":1.0,"億スイスフラン":0.01,"10億スイスフラン":0.001},
+    "TWD":{"百万台湾ドル":1.0,"億台湾ドル":0.01,"10億台湾ドル":0.001},
+    "HKD":{"百万香港ドル":1.0,"億香港ドル":0.01,"10億香港ドル":0.001}
 }
 JPY_UNITS={"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001}
-DEFAULT_LOCAL={"JPY":"億円","USD":"10億ドル","EUR":"10億ユーロ","CNY":"億元","DKK":"10億クローネ","KRW":"10億ウォン","NOK":"10億クローネ","SEK":"10億クローナ","CHF":"10億スイスフラン","TWD":"10億台湾ドル","HKD":"10億香港ドル"}
+DEFAULT_LOCAL={"JPY":"億円","USD":"億ドル","EUR":"億ユーロ","CNY":"億元","DKK":"億クローネ","KRW":"億ウォン","NOK":"億クローネ","SEK":"億クローナ","CHF":"億スイスフラン","TWD":"億台湾ドル","HKD":"億香港ドル"}
 ASPECTS={"16:9":(16,9),"4:3":(12,9),"3:2":(15,10),"1:1":(10,10),"9:16":(9,16)}
 
 
@@ -961,7 +964,7 @@ with t1:
             effective_rc,effective_oc,effective_mc,
             aspect,cw,ch,sm,sl,dpi,note,company_subtitle
         )
-        st.pyplot(fig,use_container_width=True)
+        st.image(buf.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),"financials.png","image/png")
 
 def seg_tab(kind):
@@ -1064,7 +1067,7 @@ def seg_tab(kind):
             ed,company,csv_currency,csv_mode,csv_unit,fx,int(n),style,title,
             ptype,aspect,cw,ch,lab,dpi,note,seg_colors,seg_subtitle
         )
-        st.pyplot(fig,use_container_width=True)
+        st.image(buf.getvalue(), width="stretch")
         st.download_button(
             "PNGをダウンロード",png.getvalue(),key+".png",
             "image/png",key="d"+key
@@ -1137,7 +1140,7 @@ with t4:
             effective_orders_color,effective_backlog_color,
             aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle
         )
-        st.pyplot(fig,use_container_width=True)
+        st.image(buf.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),
                            "orders_backlog.png","image/png",key="download_orders")
 
@@ -1217,7 +1220,7 @@ with t5:
             ptype,aspect,cw,ch,arr_labels,dpi,note,arr_colors,arr_subtitle,
             show_total=arr_total,total_name="全社ARR"
         )
-        st.pyplot(fig,use_container_width=True)
+        st.image(buf.getvalue(), width="stretch")
         st.download_button(
             "PNGをダウンロード",png.getvalue(),"arr.png",
             "image/png",key="download_arr"
