@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v66 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v68 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -41,19 +41,19 @@ THEME = {
 # 例: JPY=百万円、USD=百万ドル、CNY=百万元、EUR=百万ユーロ。
 # したがって百万→億は x0.01、百万→10億は x0.001 で表示変換する。
 LOCAL_UNITS={
-    "JPY":{"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001},
+    "JPY":{"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001,"100兆円":0.00000001,"京円":0.0000000001},
     "USD":{"百万ドル":1.0,"億ドル":0.01,"10億ドル":0.001},
     "EUR":{"百万ユーロ":1.0,"億ユーロ":0.01,"10億ユーロ":0.001},
     "CNY":{"百万元":1.0,"億元":0.01,"10億元":0.001},
     "DKK":{"百万クローネ":1.0,"億クローネ":0.01,"10億クローネ":0.001},
-    "KRW":{"百万ウォン":1.0,"億ウォン":0.01,"10億ウォン":0.001},
+    "KRW":{"百万ウォン":1.0,"億ウォン":0.01,"10億ウォン":0.001,"兆ウォン":0.000001,"100兆ウォン":0.00000001,"京ウォン":0.0000000001},
     "NOK":{"百万クローネ":1.0,"億クローネ":0.01,"10億クローネ":0.001},
     "SEK":{"百万クローナ":1.0,"億クローナ":0.01,"10億クローナ":0.001},
     "CHF":{"百万スイスフラン":1.0,"億スイスフラン":0.01,"10億スイスフラン":0.001},
     "TWD":{"百万台湾ドル":1.0,"億台湾ドル":0.01,"10億台湾ドル":0.001},
     "HKD":{"百万香港ドル":1.0,"億香港ドル":0.01,"10億香港ドル":0.001}
 }
-JPY_UNITS={"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001}
+JPY_UNITS={"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001,"100兆円":0.00000001,"京円":0.0000000001}
 DEFAULT_LOCAL={"JPY":"億円","USD":"億ドル","EUR":"億ユーロ","CNY":"億元","DKK":"億クローネ","KRW":"億ウォン","NOK":"億クローネ","SEK":"億クローナ","CHF":"億スイスフラン","TWD":"億台湾ドル","HKD":"億香港ドル"}
 ASPECTS={"16:9":(16,9),"4:3":(12,9),"3:2":(15,10),"1:1":(10,10),"9:16":(9,16)}
 
@@ -459,13 +459,25 @@ def add_kpi_card(fig,x,y,w,h,title,value,delta,color,bg):
     ))
     cx=x+w*.045+(w-w*.045)/2
 
-    # KPIカードは以前の見やすい級数に固定。
-    # タイトル 17pt / 最新値 28pt / 前年比・前年差 15pt
-    fig.text(cx,y+h*.72,title,fontsize=17,fontweight="bold",
+    # KPIカード: 円・ウォンなど桁の大きい通貨でも指定単位を維持して収める。
+    # 「15,345億円」「15,345億ウォン」は通常サイズ、さらに長い値だけ段階縮小。
+    value_text = str(value)
+    value_len = len(value_text)
+    if value_len <= 11:
+        value_fs = 25
+    elif value_len <= 14:
+        value_fs = 23
+    elif value_len <= 18:
+        value_fs = 21
+    elif value_len <= 22:
+        value_fs = 19
+    else:
+        value_fs = 17
+    fig.text(cx,y+h*.72,title,fontsize=16,fontweight="bold",
              color=THEME["text"],ha="center",va="center",zorder=12)
-    fig.text(cx,y+h*.42,value,fontsize=28,fontweight="bold",
+    fig.text(cx,y+h*.42,value_text,fontsize=value_fs,fontweight="bold",
              color=color,ha="center",va="center",zorder=12)
-    fig.text(cx,y+h*.17,delta,fontsize=15,fontweight="bold",
+    fig.text(cx,y+h*.17,delta,fontsize=14,fontweight="bold",
              color=color,ha="center",va="center",zorder=12)
 
 def add_callout(ax,x,y,text,color,offset):
