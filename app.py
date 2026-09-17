@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v68 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v71 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -210,6 +210,7 @@ def read_master_excel(uploaded):
         if {"種類","項目名","カラー"}.issubset(cfg.columns):
             for _, row in cfg.iterrows():
                 kind=row.get("種類"); item=row.get("項目名"); color=row.get("カラー")
+                display=row.get("表示名") if "表示名" in cfg.columns else None
                 if pd.isna(kind) or pd.isna(item) or pd.isna(color):
                     continue
                 kind=str(kind).strip(); item=str(item).strip(); color=str(color).strip()
@@ -217,8 +218,12 @@ def read_master_excel(uploaded):
                     continue
                 if kind == "セグメント":
                     settings[f"segment_color:{item}"] = color
+                    if pd.notna(display) and str(display).strip():
+                        settings[f"segment_display:{item}"] = str(display).strip()
                 elif kind == "ARR":
                     settings[f"arr_color:{item}"] = color
+                    if pd.notna(display) and str(display).strip():
+                        settings[f"arr_display:{item}"] = str(display).strip()
 
     sheets = {}
     for key, sheet_name in MASTER_SHEETS.items():
@@ -316,6 +321,14 @@ def master_meta(settings, section):
                 if k.startswith(prefix) and k[len(prefix):]:
                     meta[f"{META_SEGMENT_PREFIX}{k[len(prefix):]}"] = v
     return meta
+
+def master_display_names(settings, section):
+    """設定シートの表示名を、データ列名 -> 画像上の表示名として返す。"""
+    if not settings:
+        return {}
+    prefix = "arr_display:" if section == "arr" else "segment_display:"
+    return {k[len(prefix):]: str(v).strip() for k,v in settings.items()
+            if k.startswith(prefix) and k[len(prefix):] and str(v).strip()}
 
 def resolve_csv_display(meta, fallback_currency, fallback_mode, fallback_unit):
     """CSVの通貨・表示単位があれば優先。表示モードは表示単位から自動判定。"""
@@ -647,8 +660,9 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
 
 def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
                   aspect,cw,ch,labels_on,dpi,note,segment_colors,subtitle,
-                  show_total=False,total_name="全社ARR"):
+                  show_total=False,total_name="全社ARR",display_names=None):
 
+    display_names = display_names or {}
     raw=df.copy()
     segs=[c for c in raw.columns if c!="period" and not raw[c].isna().all()]
     keep=choose_periods(raw["period"],n)
@@ -675,7 +689,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
         for i,s in enumerate(segs):
             vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
             bottoms=np.where(vals>=0,pos,neg)
-            ax.bar(x,vals,bottom=bottoms,width=.68,color=colors[i],label=s,zorder=3)
+            ax.bar(x,vals,bottom=bottoms,width=.68,color=colors[i],label=display_names.get(s,s),zorder=3)
             if len(disp): latest_positions.append((s,vals[-1],bottoms[-1]+vals[-1]/2,colors[i]))
             pos+=np.where(vals>=0,vals,0); neg+=np.where(vals<0,vals,0)
     else:
@@ -684,7 +698,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
         for i,s in enumerate(segs):
             vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
             xpos=x+offsets[i]
-            ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=s,zorder=3)
+            ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=display_names.get(s,s),zorder=3)
             if len(disp): latest_positions.append((s,vals[-1],vals[-1],colors[i]))
 
     plist=disp["period"].astype(str).tolist()
@@ -834,7 +848,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v67 Deploy")
+st.title("決算画像ジェネレーター v71 Deploy")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -1076,6 +1090,7 @@ def seg_tab(kind):
     ed=normalize_numeric_columns(ed)
 
     segs=[c for c in ed.columns if c!="period"]
+    seg_display_names=master_display_names(master_settings, "segment_revenue")
     st.markdown("**セグメントカラー**")
     color_cols=st.columns(min(3,max(len(segs),1)))
     seg_colors={}
@@ -1086,7 +1101,7 @@ def seg_tab(kind):
         )
         with color_cols[i%len(color_cols)]:
             picked=st.color_picker(
-                s,csv_color,key=f"color_{key}_{s}"
+                seg_display_names.get(s,s),csv_color,key=f"color_{key}_{s}"
             )
         # CSV指定がある場合はCSVを優先
         seg_colors[s]=normalize_color(
@@ -1120,7 +1135,8 @@ def seg_tab(kind):
     if generate:
         fig,png=segment_chart(
             ed,company,csv_currency,csv_mode,csv_unit,fx,int(n),style,title,
-            ptype,aspect,cw,ch,lab,dpi,note,seg_colors,seg_subtitle
+            ptype,aspect,cw,ch,lab,dpi,note,seg_colors,seg_subtitle,
+            display_names=seg_display_names
         )
         st.image(png.getvalue(), width="stretch")
         st.download_button(
@@ -1232,6 +1248,7 @@ with t5:
     aed=st.data_editor(arr_source,use_container_width=True,num_rows="dynamic",key="arr_editor")
     aed=normalize_numeric_columns(aed)
     products=[c for c in aed.columns if c!="period"]
+    arr_display_names=master_display_names(master_settings, "arr")
 
     st.markdown("**プロダクトカラー**")
     arr_color_cols=st.columns(min(3,max(len(products),1)))
@@ -1242,7 +1259,7 @@ with t5:
             THEME["segment_palette"][i%len(THEME["segment_palette"])]
         )
         with arr_color_cols[i%len(arr_color_cols)]:
-            picked=st.color_picker(product,csv_color,key=f"arr_color_{product}")
+            picked=st.color_picker(arr_display_names.get(product,product),csv_color,key=f"arr_color_{product}")
         arr_colors[product]=normalize_color(
             arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),picked
         )
@@ -1273,7 +1290,7 @@ with t5:
         fig,png=segment_chart(
             aed,company,csv_currency,csv_mode,csv_unit,fx,int(an),"積み上げ","プロダクト別 ARR",
             ptype,aspect,cw,ch,arr_labels,dpi,note,arr_colors,arr_subtitle,
-            show_total=arr_total,total_name="全社ARR"
+            show_total=arr_total,total_name="全社ARR",display_names=arr_display_names
         )
         st.image(png.getvalue(), width="stretch")
         st.download_button(
