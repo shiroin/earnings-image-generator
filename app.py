@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v64 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v65 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -964,7 +964,7 @@ with t1:
             effective_rc,effective_oc,effective_mc,
             aspect,cw,ch,sm,sl,dpi,note,company_subtitle
         )
-        st.image(buf.getvalue(), width="stretch")
+        st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),"financials.png","image/png")
 
 def seg_tab(kind):
@@ -1067,7 +1067,7 @@ def seg_tab(kind):
             ed,company,csv_currency,csv_mode,csv_unit,fx,int(n),style,title,
             ptype,aspect,cw,ch,lab,dpi,note,seg_colors,seg_subtitle
         )
-        st.image(buf.getvalue(), width="stretch")
+        st.image(png.getvalue(), width="stretch")
         st.download_button(
             "PNGをダウンロード",png.getvalue(),key+".png",
             "image/png",key="d"+key
@@ -1140,7 +1140,7 @@ with t4:
             effective_orders_color,effective_backlog_color,
             aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle
         )
-        st.image(buf.getvalue(), width="stretch")
+        st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),
                            "orders_backlog.png","image/png",key="download_orders")
 
@@ -1220,7 +1220,7 @@ with t5:
             ptype,aspect,cw,ch,arr_labels,dpi,note,arr_colors,arr_subtitle,
             show_total=arr_total,total_name="全社ARR"
         )
-        st.image(buf.getvalue(), width="stretch")
+        st.image(png.getvalue(), width="stretch")
         st.download_button(
             "PNGをダウンロード",png.getvalue(),"arr.png",
             "image/png",key="download_arr"
