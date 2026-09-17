@@ -771,7 +771,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v59 Deploy")
+st.title("決算画像ジェネレーター v60 Deploy")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -837,7 +837,7 @@ with st.sidebar:
     default="億円" if mode=="円換算" else DEFAULT_LOCAL[currency]
     unit=st.selectbox("表示単位",units,index=units.index(default))
 
-    aspect=st.selectbox("縦横比",["16:9","4:3","3:2","1:1","9:16","カスタム"])
+    aspect=st.selectbox("縦横比",["1:1","16:9","4:3","3:2","9:16","カスタム"])
     cw,ch=16.0,9.0
     if aspect=="カスタム":
         cw=st.number_input("横幅",5.0,30.0,16.0,.5)
