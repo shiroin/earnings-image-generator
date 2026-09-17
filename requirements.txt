@@ -1,4 +1,4 @@
-streamlit==1.63.0
-requests>=2.31,<3
-beautifulsoup4>=4.12,<5
-yt-dlp>=2026.8.19
+streamlit>=1.35
+pandas>=2.0
+matplotlib>=3.8
+numpy>=1.26
