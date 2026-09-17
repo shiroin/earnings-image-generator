@@ -40,10 +40,16 @@ LOCAL_UNITS={
     "USD":{"百万ドル":1.0,"10億ドル":0.001},
     "EUR":{"100万ユーロ":1.0,"10億ユーロ":0.001},
     "CNY":{"百万元":1.0,"億元":0.01,"10億元":0.001},
-    "DKK":{"百万クローネ":1.0,"10億クローネ":0.001}
+    "DKK":{"百万クローネ":1.0,"10億クローネ":0.001},
+    "KRW":{"百万ウォン":1.0,"10億ウォン":0.001},
+    "NOK":{"百万クローネ":1.0,"10億クローネ":0.001},
+    "SEK":{"百万クローナ":1.0,"10億クローナ":0.001},
+    "CHF":{"百万スイスフラン":1.0,"10億スイスフラン":0.001},
+    "TWD":{"百万台湾ドル":1.0,"10億台湾ドル":0.001},
+    "HKD":{"百万香港ドル":1.0,"10億香港ドル":0.001}
 }
 JPY_UNITS={"百万円":1.0,"億円":0.01,"十億円":0.001,"兆円":0.000001}
-DEFAULT_LOCAL={"JPY":"億円","USD":"10億ドル","EUR":"10億ユーロ","CNY":"億元","DKK":"10億クローネ"}
+DEFAULT_LOCAL={"JPY":"億円","USD":"10億ドル","EUR":"10億ユーロ","CNY":"億元","DKK":"10億クローネ","KRW":"10億ウォン","NOK":"10億クローネ","SEK":"10億クローナ","CHF":"10億スイスフラン","TWD":"10億台湾ドル","HKD":"10億香港ドル"}
 ASPECTS={"16:9":(16,9),"4:3":(12,9),"3:2":(15,10),"1:1":(10,10),"9:16":(9,16)}
 
 
@@ -243,7 +249,7 @@ def convert(series,currency,mode,unit,fx):
 def currency_basis(currency,mode):
     if mode=="円換算":
         return "円換算"
-    return {"JPY":"円ベース","USD":"USドルベース","EUR":"ユーロベース","CNY":"人民元ベース","DKK":"デンマーククローネベース"}[currency]
+    return {"JPY":"円ベース","USD":"USドルベース","EUR":"ユーロベース","CNY":"人民元ベース","DKK":"デンマーククローネベース","KRW":"韓国ウォンベース","NOK":"ノルウェークローネベース","SEK":"スウェーデンクローナベース","CHF":"スイスフランベース","TWD":"台湾ドルベース","HKD":"香港ドルベース"}[currency]
 
 def style_axis(ax, labelsize=17):
     ax.set_facecolor(THEME["bg"])
@@ -640,7 +646,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v54 Deploy")
+st.title("決算画像ジェネレーター v55 Deploy")
 st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
@@ -648,13 +654,19 @@ ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
 with st.sidebar:
     company=st.text_input("企業名","サンプル株式会社")
     note=st.text_input("注意書き","※ 最新期は会社予想")
-    currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY","DKK"])
+    currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"])
     mode=st.radio("グラフの通貨表示",["現地通貨","円換算"],horizontal=True)
     usd=st.number_input("USD/JPY",0.01,value=150.0,step=.1)
     eur=st.number_input("EUR/JPY",0.01,value=165.0,step=.1)
     cny=st.number_input("CNY/JPY",0.01,value=21.0,step=.1)
-    dkk=st.number_input("DKK/JPY",0.01,value=23.5,step=.1)
-    fx={"USD":usd,"EUR":eur,"CNY":cny,"DKK":dkk,"JPY":1.0}
+    dkk=st.number_input("DKK/JPY",0.0001,value=23.5,step=.1)
+    krw=st.number_input("KRW/JPY",0.0001,value=0.11,step=.001,format="%.4f")
+    nok=st.number_input("NOK/JPY",0.0001,value=14.0,step=.1)
+    sek=st.number_input("SEK/JPY",0.0001,value=15.5,step=.1)
+    chf=st.number_input("CHF/JPY",0.0001,value=185.0,step=.1)
+    twd=st.number_input("TWD/JPY",0.0001,value=4.9,step=.01)
+    hkd=st.number_input("HKD/JPY",0.0001,value=19.2,step=.01)
+    fx={"USD":usd,"EUR":eur,"CNY":cny,"DKK":dkk,"KRW":krw,"NOK":nok,"SEK":sek,"CHF":chf,"TWD":twd,"HKD":hkd,"JPY":1.0}
 
     units=list(JPY_UNITS.keys()) if mode=="円換算" else list(LOCAL_UNITS[currency].keys())
     default="億円" if mode=="円換算" else DEFAULT_LOCAL[currency]
