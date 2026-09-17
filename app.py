@@ -179,6 +179,21 @@ def read_master_excel(uploaded):
                 if pd.notna(k) and str(k).strip() and pd.notna(v) and str(v).strip():
                     settings[str(k).strip()] = str(v).strip()
 
+        # v59: 設定シート右側の「種類 / 項目名 / カラー」テーブルを読む。
+        # セグメント色は売上高・利益で共通、ARRはプロダクトごとに設定。
+        if {"種類","項目名","カラー"}.issubset(cfg.columns):
+            for _, row in cfg.iterrows():
+                kind=row.get("種類"); item=row.get("項目名"); color=row.get("カラー")
+                if pd.isna(kind) or pd.isna(item) or pd.isna(color):
+                    continue
+                kind=str(kind).strip(); item=str(item).strip(); color=str(color).strip()
+                if not kind or not item or not color:
+                    continue
+                if kind == "セグメント":
+                    settings[f"segment_color:{item}"] = color
+                elif kind == "ARR":
+                    settings[f"arr_color:{item}"] = color
+
     sheets = {}
     for key, sheet_name in MASTER_SHEETS.items():
         if sheet_name in xls.sheet_names:
@@ -233,10 +248,22 @@ def master_meta(settings, section):
         for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_BACKLOG_COLOR,"backlog_color")]:
             if settings.get(sk): meta[mk]=settings[sk]
     else:
-        prefix = {"segment_revenue":"segment_revenue_color:","segment_profit":"segment_profit_color:","arr":"arr_color:"}[section]
-        for k,v in settings.items():
-            if k.startswith(prefix) and k[len(prefix):]:
-                meta[f"{META_SEGMENT_PREFIX}{k[len(prefix):]}"] = v
+        # v59: セグメント売上高・利益は共通の segment_color:<名称> を優先。
+        # 旧v58形式も後方互換で読み込む。
+        if section in ("segment_revenue", "segment_profit"):
+            common_prefix = "segment_color:"
+            legacy_prefix = "segment_revenue_color:" if section == "segment_revenue" else "segment_profit_color:"
+            for k,v in settings.items():
+                if k.startswith(legacy_prefix) and k[len(legacy_prefix):]:
+                    meta[f"{META_SEGMENT_PREFIX}{k[len(legacy_prefix):]}"] = v
+            for k,v in settings.items():
+                if k.startswith(common_prefix) and k[len(common_prefix):]:
+                    meta[f"{META_SEGMENT_PREFIX}{k[len(common_prefix):]}"] = v
+        else:
+            prefix = "arr_color:"
+            for k,v in settings.items():
+                if k.startswith(prefix) and k[len(prefix):]:
+                    meta[f"{META_SEGMENT_PREFIX}{k[len(prefix):]}"] = v
     return meta
 
 def resolve_csv_display(meta, fallback_currency, fallback_mode, fallback_unit):
@@ -744,7 +771,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v58 Deploy")
+st.title("決算画像ジェネレーター v59 Deploy")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
