@@ -1,5 +1,7 @@
 
 import io
+import re
+import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -9,7 +11,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v51 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v57 Deploy", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -140,6 +142,93 @@ def read_uploaded_csv(uploaded):
     data = df[data_cols].copy()
     data = normalize_numeric_columns(data)
     return data, meta
+
+MASTER_SHEETS = {
+    "company": "会社全体",
+    "segment_revenue": "セグメント売上高",
+    "segment_profit": "セグメント利益",
+    "orders": "受注",
+    "arr": "ARR",
+}
+
+def read_master_excel(uploaded):
+    """1社1ファイルのExcelマスターを読み込む。Google Sheetsから取得したxlsx bytesにも対応。"""
+    if uploaded is None:
+        return {}, {}
+    raw = uploaded.getvalue() if hasattr(uploaded, "getvalue") else uploaded
+    try:
+        xls = pd.ExcelFile(io.BytesIO(raw))
+    except Exception as e:
+        raise ValueError(f"Excelマスターファイルを読み込めませんでした: {e}")
+
+    settings = {}
+    if "設定" in xls.sheet_names:
+        cfg = pd.read_excel(xls, sheet_name="設定", header=3)
+        if {"setting","value"}.issubset(cfg.columns):
+            for _, row in cfg.iterrows():
+                k=row.get("setting"); v=row.get("value")
+                if pd.notna(k) and str(k).strip() and pd.notna(v) and str(v).strip():
+                    settings[str(k).strip()] = str(v).strip()
+
+    sheets = {}
+    for key, sheet_name in MASTER_SHEETS.items():
+        if sheet_name in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet_name, header=3)
+            df = df.dropna(how="all")
+            if len(df):
+                sheets[key] = normalize_numeric_columns(df)
+    return sheets, settings
+
+def google_sheet_id(url):
+    """GoogleスプレッドシートURLからSpreadsheet IDを抽出する。"""
+    text=str(url or "").strip()
+    m=re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", text)
+    if not m:
+        raise ValueError("GoogleスプレッドシートURLを確認してください。/spreadsheets/d/... 形式のURLに対応しています。")
+    return m.group(1)
+
+def read_google_sheet_master(url):
+    """共有可能なGoogle Sheetsをxlsxとして取得し、Excelマスターと同じロジックで読む。
+
+    Google側は「リンクを知っている全員が閲覧可」等、ログインなしで閲覧できる共有設定が必要。
+    """
+    sid=google_sheet_id(url)
+    export_url=f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+    try:
+        r=requests.get(export_url,timeout=20,allow_redirects=True)
+        r.raise_for_status()
+    except Exception as e:
+        raise ValueError(f"Googleスプレッドシートを取得できませんでした。共有設定を確認してください: {e}")
+    ctype=(r.headers.get("content-type") or "").lower()
+    if "html" in ctype or len(r.content)<1000:
+        raise ValueError("GoogleスプレッドシートをExcelとして取得できませんでした。「リンクを知っている全員が閲覧可」など、外部から閲覧できる共有設定を確認してください。")
+    return read_master_excel(r.content)
+
+def master_meta(settings, section):
+    """設定シートを既存CSVメタデータ形式へ変換する。"""
+    meta = {}
+    common = {
+        META_INPUT_CURRENCY: settings.get("input_currency"),
+        META_DISPLAY_UNIT: settings.get("display_unit"),
+    }
+    meta.update({k:v for k,v in common.items() if v})
+    subtitle_key = {
+        "company":"company_subtitle", "segment_revenue":"segment_revenue_subtitle",
+        "segment_profit":"segment_profit_subtitle", "orders":"orders_subtitle", "arr":"arr_subtitle"
+    }[section]
+    if settings.get(subtitle_key): meta[META_SUBTITLE]=settings[subtitle_key]
+    if section=="company":
+        for mk,sk in [(META_REVENUE_COLOR,"revenue_color"),(META_OPERATING_PROFIT_COLOR,"operating_profit_color"),(META_MARGIN_COLOR,"margin_color")]:
+            if settings.get(sk): meta[mk]=settings[sk]
+    elif section=="orders":
+        for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_BACKLOG_COLOR,"backlog_color")]:
+            if settings.get(sk): meta[mk]=settings[sk]
+    else:
+        prefix = {"segment_revenue":"segment_revenue_color:","segment_profit":"segment_profit_color:","arr":"arr_color:"}[section]
+        for k,v in settings.items():
+            if k.startswith(prefix) and k[len(prefix):]:
+                meta[f"{META_SEGMENT_PREFIX}{k[len(prefix):]}"] = v
+    return meta
 
 def resolve_csv_display(meta, fallback_currency, fallback_mode, fallback_unit):
     """CSVの通貨・表示単位があれば優先。表示モードは表示単位から自動判定。"""
@@ -646,14 +735,54 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v55 Deploy")
-st.caption("CSV内に入力通貨・表示単位・系列カラー・サブタイトルを埋め込める版。CSV指定がある項目は画面設定より優先します。")
+st.title("決算画像ジェネレーター v57 Deploy")
+st.caption("1社1つのGoogleスプレッドシートをマスターDBとして直接読み込めます。Excelマスター／従来のタブ別CSVも引き続き利用できます。")
+
+st.subheader("企業マスター")
+gsheet_url=st.text_input("GoogleスプレッドシートURL",placeholder="https://docs.google.com/spreadsheets/d/...")
+col_g1,col_g2=st.columns([1,3])
+with col_g1:
+    load_gsheet=st.button("Google Sheetsから読み込む",type="primary",use_container_width=True)
+with col_g2:
+    st.caption("Google側は「リンクを知っている全員が閲覧可」など、外部から閲覧できる共有設定にしてください。編集権限は不要です。")
+
+if load_gsheet:
+    if not gsheet_url.strip():
+        st.error("GoogleスプレッドシートURLを入力してください。")
+    else:
+        try:
+            gs_sheets,gs_settings=read_google_sheet_master(gsheet_url)
+            st.session_state["google_master_sheets"]=gs_sheets
+            st.session_state["google_master_settings"]=gs_settings
+            st.session_state["google_master_url"]=gsheet_url
+            st.success(f"Google Sheetsマスターを読み込みました：{len(gs_sheets)}データシート")
+        except Exception as e:
+            st.error(str(e))
+
+master_upload=st.file_uploader(
+    "または会社マスターExcelを読み込む（.xlsx / 全タブ一括）", type=["xlsx"], key="master_excel_upload"
+)
+try:
+    with open("company_master_template.xlsx","rb") as f:
+        st.download_button("会社マスターExcel テンプレートをダウンロード", f.read(), "company_master_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+except FileNotFoundError:
+    pass
+master_sheets=st.session_state.get("google_master_sheets",{}).copy()
+master_settings=st.session_state.get("google_master_settings",{}).copy()
+if master_upload is not None:
+    try:
+        master_sheets, master_settings = read_master_excel(master_upload)
+        st.success(f"Excelマスターを読み込みました：{len(master_sheets)}データシート")
+    except Exception as e:
+        st.error(str(e))
+elif master_sheets:
+    st.info("Google Sheetsマスターを使用中。更新後は「Google Sheetsから読み込む」を押すと最新データを再取得します。")
 
 ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
 
 with st.sidebar:
-    company=st.text_input("企業名","サンプル株式会社")
-    note=st.text_input("注意書き","※ 最新期は会社予想")
+    company=st.text_input("企業名",master_settings.get("company_name","サンプル株式会社"))
+    note=st.text_input("注意書き",master_settings.get("note","※ 最新期は会社予想"))
     currency=st.selectbox("CSVの入力通貨",["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"])
     mode=st.radio("グラフの通貨表示",["現地通貨","円換算"],horizontal=True)
     usd=st.number_input("USD/JPY",0.01,value=150.0,step=.1)
@@ -702,9 +831,9 @@ with t1:
         type=["csv"], key="company_csv_upload"
     )
 
-    company_meta={}
-    company_source=sample_company
-    if uploaded_company is not None:
+    company_meta=master_meta(master_settings,"company") if master_settings else {}
+    company_source=master_sheets.get("company",sample_company)
+    if uploaded_company is not None and "company" not in master_sheets:
         try:
             loaded, company_meta=read_uploaded_csv(uploaded_company)
             required={"period","revenue","operating_profit"}
@@ -721,7 +850,7 @@ with t1:
 
     if company_meta:
         st.caption(
-            f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}"
+            f"ファイル設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}"
         )
 
     ed=st.data_editor(company_source,use_container_width=True,num_rows="dynamic",key="company_editor")
@@ -797,9 +926,10 @@ def seg_tab(kind):
         type=["csv"], key=f"{key}_csv_upload"
     )
 
-    seg_meta={}
-    seg_source=sample_seg
-    if uploaded_seg is not None:
+    master_section="segment_revenue" if kind=="売上高" else "segment_profit"
+    seg_meta=master_meta(master_settings,master_section) if master_settings else {}
+    seg_source=master_sheets.get(master_section,sample_seg)
+    if uploaded_seg is not None and master_section not in master_sheets:
         try:
             loaded, seg_meta=read_uploaded_csv(uploaded_seg)
             if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
@@ -814,7 +944,7 @@ def seg_tab(kind):
     )
     if seg_meta:
         st.caption(
-            f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}"
+            f"ファイル設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}"
         )
 
     ed=st.data_editor(
@@ -888,8 +1018,9 @@ with t4:
         "受注高・受注残高CSVを読み込む（設定列つきCSV対応）",
         type=["csv"],key="orders_csv_upload"
     )
-    orders_meta={}; orders_source=sample_orders
-    if uploaded_orders is not None:
+    orders_meta=master_meta(master_settings,"orders") if master_settings else {}
+    orders_source=master_sheets.get("orders",sample_orders)
+    if uploaded_orders is not None and "orders" not in master_sheets:
         try:
             loaded,orders_meta=read_uploaded_csv(uploaded_orders)
             required={"period","orders","backlog"}
@@ -902,7 +1033,7 @@ with t4:
 
     csv_currency,csv_mode,csv_unit=resolve_csv_display(orders_meta,currency,mode,unit)
     if orders_meta:
-        st.caption(f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
+        st.caption(f"ファイル設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
 
     oed=st.data_editor(orders_source,use_container_width=True,num_rows="dynamic",key="orders_editor")
     oed=normalize_numeric_columns(oed)
@@ -957,8 +1088,9 @@ with t5:
         "ARR CSVを読み込む（period + 各プロダクト列）",
         type=["csv"],key="arr_csv_upload"
     )
-    arr_meta={}; arr_source=sample_arr
-    if uploaded_arr is not None:
+    arr_meta=master_meta(master_settings,"arr") if master_settings else {}
+    arr_source=master_sheets.get("arr",sample_arr)
+    if uploaded_arr is not None and "arr" not in master_sheets:
         try:
             loaded,arr_meta=read_uploaded_csv(uploaded_arr)
             if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
@@ -970,7 +1102,7 @@ with t5:
 
     csv_currency,csv_mode,csv_unit=resolve_csv_display(arr_meta,currency,mode,unit)
     if arr_meta:
-        st.caption(f"CSV設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
+        st.caption(f"ファイル設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
 
     aed=st.data_editor(arr_source,use_container_width=True,num_rows="dynamic",key="arr_editor")
     aed=normalize_numeric_columns(aed)
