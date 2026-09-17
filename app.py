@@ -555,7 +555,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     fig.text(.04,.965,company,fontsize=36,fontweight="bold",
              color=THEME["text"],ha="left",va="top")
     if subtitle and str(subtitle).strip():
-        fig.text(.04,.895,str(subtitle).strip(),fontsize=17,fontweight="bold",
+        fig.text(.04,.895,str(subtitle).strip(),fontsize=20,fontweight="bold",
                  color=THEME["muted"],ha="left",va="top")
 
     if show_latest and len(df):
@@ -731,7 +731,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     fig.text(.035,.965,company,fontsize=38,fontweight="bold",
              color=THEME["text"],ha="left",va="top")
     if subtitle and str(subtitle).strip():
-        fig.text(.035,.895,str(subtitle).strip(),fontsize=22,fontweight="bold",
+        fig.text(.035,.895,str(subtitle).strip(),fontsize=24,fontweight="bold",
                  color=THEME["muted"],ha="left",va="top")
 
     lag=4 if ptype=="四半期" else 1
@@ -1010,7 +1010,7 @@ with t1:
 
     sm=st.checkbox("営業利益率を表示",True)
     sl=st.checkbox("最新期ラベルを表示",True)
-    default_company_subtitle=company_meta.get(META_SUBTITLE) or ("四半期業績" if ptype=="四半期" else "年度業績")
+    default_company_subtitle=company_meta.get(META_SUBTITLE) or ("四半期業績の推移" if ptype=="四半期" else "年度業績の推移")
     company_subtitle=st.text_input("サブタイトル",default_company_subtitle,key="company_subtitle")
 
     company_download=company_csv_for_download(
@@ -1112,7 +1112,7 @@ def seg_tab(kind):
     n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="n"+key)
     style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key="s"+key)
     lab=st.checkbox("最新期のデータラベル・前年比を表示",True,key="l"+key)
-    default_seg_subtitle=seg_meta.get(META_SUBTITLE) or f"{title}の推移（{currency_basis(csv_currency,csv_mode)}）"
+    default_seg_subtitle=seg_meta.get(META_SUBTITLE) or ("セグメント別 売上高の推移" if kind=="売上高" else "セグメント別 営業利益の推移")
     seg_subtitle=st.text_input("サブタイトル",default_seg_subtitle,key="subtitle_"+key)
 
     seg_download=segment_csv_for_download(
