@@ -144,12 +144,21 @@ def read_uploaded_csv(uploaded):
     return data, meta
 
 MASTER_SHEETS = {
-    "company": "会社全体",
-    "segment_revenue": "セグメント売上高",
-    "segment_profit": "セグメント利益",
-    "orders": "受注",
-    "arr": "ARR",
+    "company_quarterly": "会社全体_四半期",
+    "company_annual": "会社全体_年度",
+    "segment_revenue_quarterly": "セグメント売上高_四半期",
+    "segment_revenue_annual": "セグメント売上高_年度",
+    "segment_profit_quarterly": "セグメント利益_四半期",
+    "segment_profit_annual": "セグメント利益_年度",
+    "orders_quarterly": "受注_四半期",
+    "orders_annual": "受注_年度",
+    "arr_quarterly": "ARR_四半期",
+    "arr_annual": "ARR_年度",
 }
+
+def master_period_key(section, ptype):
+    suffix = "quarterly" if ptype == "四半期" else "annual"
+    return f"{section}_{suffix}"
 
 def read_master_excel(uploaded):
     """1社1ファイルのExcelマスターを読み込む。Google Sheetsから取得したxlsx bytesにも対応。"""
@@ -735,8 +744,8 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v57 Deploy")
-st.caption("1社1つのGoogleスプレッドシートをマスターDBとして直接読み込めます。Excelマスター／従来のタブ別CSVも引き続き利用できます。")
+st.title("決算画像ジェネレーター v58 Deploy")
+st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
 gsheet_url=st.text_input("GoogleスプレッドシートURL",placeholder="https://docs.google.com/spreadsheets/d/...")
@@ -832,8 +841,9 @@ with t1:
     )
 
     company_meta=master_meta(master_settings,"company") if master_settings else {}
-    company_source=master_sheets.get("company",sample_company)
-    if uploaded_company is not None and "company" not in master_sheets:
+    company_master_key=master_period_key("company",ptype)
+    company_source=master_sheets.get(company_master_key,sample_company)
+    if uploaded_company is not None and company_master_key not in master_sheets:
         try:
             loaded, company_meta=read_uploaded_csv(uploaded_company)
             required={"period","revenue","operating_profit"}
@@ -928,8 +938,9 @@ def seg_tab(kind):
 
     master_section="segment_revenue" if kind=="売上高" else "segment_profit"
     seg_meta=master_meta(master_settings,master_section) if master_settings else {}
-    seg_source=master_sheets.get(master_section,sample_seg)
-    if uploaded_seg is not None and master_section not in master_sheets:
+    seg_master_key=master_period_key(master_section,ptype)
+    seg_source=master_sheets.get(seg_master_key,sample_seg)
+    if uploaded_seg is not None and seg_master_key not in master_sheets:
         try:
             loaded, seg_meta=read_uploaded_csv(uploaded_seg)
             if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
@@ -1019,8 +1030,9 @@ with t4:
         type=["csv"],key="orders_csv_upload"
     )
     orders_meta=master_meta(master_settings,"orders") if master_settings else {}
-    orders_source=master_sheets.get("orders",sample_orders)
-    if uploaded_orders is not None and "orders" not in master_sheets:
+    orders_master_key=master_period_key("orders",ptype)
+    orders_source=master_sheets.get(orders_master_key,sample_orders)
+    if uploaded_orders is not None and orders_master_key not in master_sheets:
         try:
             loaded,orders_meta=read_uploaded_csv(uploaded_orders)
             required={"period","orders","backlog"}
@@ -1089,8 +1101,9 @@ with t5:
         type=["csv"],key="arr_csv_upload"
     )
     arr_meta=master_meta(master_settings,"arr") if master_settings else {}
-    arr_source=master_sheets.get("arr",sample_arr)
-    if uploaded_arr is not None and "arr" not in master_sheets:
+    arr_master_key=master_period_key("arr",ptype)
+    arr_source=master_sheets.get(arr_master_key,sample_arr)
+    if uploaded_arr is not None and arr_master_key not in master_sheets:
         try:
             loaded,arr_meta=read_uploaded_csv(uploaded_arr)
             if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
