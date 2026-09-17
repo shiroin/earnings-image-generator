@@ -207,23 +207,41 @@ def read_master_excel(uploaded):
                 if pd.notna(k) and str(k).strip() and pd.notna(v) and str(v).strip():
                     settings[str(k).strip()] = str(v).strip()
 
-        if {"種類","項目名","カラー"}.issubset(cfg.columns):
-            for _, row in cfg.iterrows():
-                kind=row.get("種類"); item=row.get("項目名"); color=row.get("カラー")
-                display=row.get("表示名") if "表示名" in cfg.columns else None
-                if pd.isna(kind) or pd.isna(item) or pd.isna(color):
+        # v77: 右側の可変設定表（種類 / 項目名 / 表示名 / カラー）は、
+        # 左側の setting/value 表とは独立して raw シートから読む。
+        # これにより列位置や空欄の影響を受けず、表示名だけの変更も確実に反映する。
+        raw_cfg = pd.read_excel(xls, sheet_name="設定", header=None)
+        right_header = None
+        kind_col = item_col = display_col = color_col = None
+        for ri in range(min(len(raw_cfg), 30)):
+            vals = [str(v).strip() if pd.notna(v) else "" for v in raw_cfg.iloc[ri].tolist()]
+            if "種類" in vals and "項目名" in vals:
+                right_header = ri
+                kind_col = vals.index("種類")
+                item_col = vals.index("項目名")
+                display_col = vals.index("表示名") if "表示名" in vals else None
+                color_col = vals.index("カラー") if "カラー" in vals else None
+                break
+        if right_header is not None:
+            for ri in range(right_header + 1, len(raw_cfg)):
+                row = raw_cfg.iloc[ri]
+                kind = row.iloc[kind_col] if kind_col < len(row) else None
+                item = row.iloc[item_col] if item_col < len(row) else None
+                display = row.iloc[display_col] if display_col is not None and display_col < len(row) else None
+                color = row.iloc[color_col] if color_col is not None and color_col < len(row) else None
+                if pd.isna(kind) or pd.isna(item):
                     continue
-                kind=str(kind).strip(); item=str(item).strip(); color=str(color).strip()
-                if not kind or not item or not color:
+                kind = str(kind).strip(); item = str(item).strip()
+                if not kind or not item:
                     continue
-                if kind == "セグメント":
-                    settings[f"segment_color:{item}"] = color
-                    if pd.notna(display) and str(display).strip():
-                        settings[f"segment_display:{item}"] = str(display).strip()
-                elif kind == "ARR":
-                    settings[f"arr_color:{item}"] = color
-                    if pd.notna(display) and str(display).strip():
-                        settings[f"arr_display:{item}"] = str(display).strip()
+                prefix = "segment" if kind == "セグメント" else ("arr" if kind == "ARR" else None)
+                if prefix is None:
+                    continue
+                # 表示名とカラーを独立して保存。カラーが空でも表示名は有効。
+                if pd.notna(display) and str(display).strip():
+                    settings[f"{prefix}_display:{item}"] = str(display).strip()
+                if pd.notna(color) and str(color).strip():
+                    settings[f"{prefix}_color:{item}"] = str(color).strip()
 
     sheets = {}
     for key, sheet_name in MASTER_SHEETS.items():
@@ -1113,7 +1131,7 @@ def seg_tab(kind):
     ed=normalize_numeric_columns(ed)
 
     segs=[c for c in ed.columns if c!="period"]
-    seg_display_names=master_display_names(master_settings, "segment_revenue")
+    seg_display_names=master_display_names(master_settings, "segment_revenue" if kind=="売上高" else "segment_profit")
     st.markdown("**セグメントカラー**")
     color_cols=st.columns(min(3,max(len(segs),1)))
     seg_colors={}
