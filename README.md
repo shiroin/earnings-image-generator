@@ -17,3 +17,8 @@
 - 円換算を使う場合は `display_unit=億円` などJPY表示単位を指定すると「円換算」を自動選択。
 - 対応単位: JPY=百万円/億円/十億円/兆円、外貨=百万/億/10億の各通貨単位。
 - 財務入力値は特記がない限り百万通貨単位として扱う。
+
+## v67
+- Google Sheets URL (`docs.google.com/spreadsheets/d/...`) に加え、Google DriveファイルURL (`drive.google.com/file/d/...`) を直接入力可能。
+- Google Sheets exportを優先し、Drive上のxlsxマスターは公開ダウンロードへ自動フォールバック。
+- 共有設定は「リンクを知っている全員が閲覧可」など外部閲覧可能である必要があります。

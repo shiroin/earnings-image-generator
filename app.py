@@ -233,29 +233,51 @@ def read_master_excel(uploaded):
     return sheets, settings
 
 def google_sheet_id(url):
-    """GoogleスプレッドシートURLからSpreadsheet IDを抽出する。"""
+    """Google Sheets / Google Drive の共有URLからファイルIDを抽出する。"""
     text=str(url or "").strip()
-    m=re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", text)
-    if not m:
-        raise ValueError("GoogleスプレッドシートURLを確認してください。/spreadsheets/d/... 形式のURLに対応しています。")
-    return m.group(1)
+    patterns = [
+        r"/spreadsheets/d/([a-zA-Z0-9_-]+)",
+        r"/file/d/([a-zA-Z0-9_-]+)",
+        r"[?&]id=([a-zA-Z0-9_-]+)",
+    ]
+    for pattern in patterns:
+        m=re.search(pattern, text)
+        if m:
+            return m.group(1)
+    raise ValueError("Google Sheets または Google Drive の共有URLを確認してください。/spreadsheets/d/... と /file/d/... の両方に対応しています。")
+
+def _looks_like_excel_response(r):
+    ctype=(r.headers.get("content-type") or "").lower()
+    content=r.content or b""
+    # xlsx は ZIP なので通常 PK で始まる。content-type が曖昧でも実体を優先する。
+    return len(content) >= 1000 and content[:2] == b"PK" and "html" not in ctype
 
 def read_google_sheet_master(url):
-    """共有可能なGoogle Sheetsをxlsxとして取得し、Excelマスターと同じロジックで読む。
+    """公開共有されたGoogle SheetsまたはDrive上のxlsxマスターを読み込む。
 
-    Google側は「リンクを知っている全員が閲覧可」等、ログインなしで閲覧できる共有設定が必要。
+    まずGoogle Sheetsのxlsx exportを試し、DriveファイルURLの場合などは
+    public downloadへフォールバックする。共有設定は外部閲覧可能である必要がある。
     """
     sid=google_sheet_id(url)
-    export_url=f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
-    try:
-        r=requests.get(export_url,timeout=20,allow_redirects=True)
-        r.raise_for_status()
-    except Exception as e:
-        raise ValueError(f"Googleスプレッドシートを取得できませんでした。共有設定を確認してください: {e}")
-    ctype=(r.headers.get("content-type") or "").lower()
-    if "html" in ctype or len(r.content)<1000:
-        raise ValueError("GoogleスプレッドシートをExcelとして取得できませんでした。「リンクを知っている全員が閲覧可」など、外部から閲覧できる共有設定を確認してください。")
-    return read_master_excel(r.content)
+    candidates = [
+        f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx",
+        f"https://drive.google.com/uc?export=download&id={sid}",
+    ]
+    last_error=None
+    for download_url in candidates:
+        try:
+            r=requests.get(download_url,timeout=25,allow_redirects=True)
+            r.raise_for_status()
+            if _looks_like_excel_response(r):
+                return read_master_excel(r.content)
+            last_error="取得結果がExcelファイルではありませんでした"
+        except Exception as e:
+            last_error=str(e)
+    raise ValueError(
+        "Googleマスターを取得できませんでした。Google Sheets / Drive のどちらのURLでも利用できますが、"
+        "「リンクを知っている全員が閲覧可」など外部から閲覧できる共有設定が必要です。"
+        + (f" 詳細: {last_error}" if last_error else "")
+    )
 
 def master_meta(settings, section):
     """設定シートを既存CSVメタデータ形式へ変換する。"""
@@ -800,16 +822,16 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v60 Deploy")
+st.title("決算画像ジェネレーター v67 Deploy")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
-gsheet_url=st.text_input("GoogleスプレッドシートURL",placeholder="https://docs.google.com/spreadsheets/d/...")
+gsheet_url=st.text_input("Google Sheets / Drive URL",placeholder="https://docs.google.com/spreadsheets/d/... または https://drive.google.com/file/d/...")
 col_g1,col_g2=st.columns([1,3])
 with col_g1:
     load_gsheet=st.button("Google Sheetsから読み込む",type="primary",use_container_width=True)
 with col_g2:
-    st.caption("Google側は「リンクを知っている全員が閲覧可」など、外部から閲覧できる共有設定にしてください。編集権限は不要です。")
+    st.caption("Google Sheets URL / Google DriveファイルURLの両方に対応。「リンクを知っている全員が閲覧可」など外部閲覧可能にしてください。編集権限は不要です。")
 
 if load_gsheet:
     if not gsheet_url.strip():
