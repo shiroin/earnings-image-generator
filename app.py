@@ -927,7 +927,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v78 Deploy")
+st.title("決算画像ジェネレーター v81 Deploy")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -985,7 +985,7 @@ elif _prev_ptype != ptype:
 st.session_state["_company_subtitle_ptype"] = ptype
 
 with st.sidebar:
-    company=st.text_input("企業名",master_settings.get("company_name","サンプル株式会社"))
+    company=st.text_input("企業名",master_settings.get("company_name", ""))
     note=st.text_input("注意書き",master_settings.get("note","※ 最新期は会社予想"))
 
     currency_options=["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"]
@@ -1046,11 +1046,8 @@ else:
 t1,t2,t3,t4,t5=st.tabs(["会社全体","セグメント売上高","セグメント利益","受注高・受注残高","ARR"])
 
 with t1:
-    sample_company=pd.DataFrame({
-        "period":periods,
-        "revenue":np.linspace(250000,865000,len(periods)).astype(int),
-        "operating_profit":np.linspace(18000,132000,len(periods)).astype(int)
-    })
+    # v81: 起動時はサンプル数値を表示しない。マスター/CSV未読込なら空表から開始。
+    sample_company=pd.DataFrame(columns=["period","revenue","operating_profit"])
 
     uploaded_company=st.file_uploader(
         "会社全体CSVを読み込む（設定列つきCSV対応）",
@@ -1131,25 +1128,12 @@ with t1:
 
 def seg_tab(kind):
     if kind=="売上高":
-        vals={
-            "クラウドサービス":np.linspace(110000,315000,len(periods)).astype(int),
-            "プロフェッショナルサービス":np.linspace(50000,210000,len(periods)).astype(int),
-            "ハードウェア":np.linspace(30000,168000,len(periods)).astype(int),
-            "ソフトウェア":np.linspace(25000,105000,len(periods)).astype(int),
-            "その他":np.linspace(10000,42000,len(periods)).astype(int)
-        }
         title="セグメント別 売上高"; key="rev"
     else:
-        vals={
-            "クラウドサービス":np.linspace(12000,45000,len(periods)).astype(int),
-            "プロフェッショナルサービス":np.linspace(7000,32000,len(periods)).astype(int),
-            "ハードウェア":np.linspace(5000,28000,len(periods)).astype(int),
-            "ソフトウェア":np.linspace(3500,21000,len(periods)).astype(int),
-            "その他":np.linspace(1500,9000,len(periods)).astype(int)
-        }
         title="セグメント別 営業利益"; key="op"
 
-    sample_seg=pd.DataFrame({"period":periods,**vals})
+    # v81: 起動時はダミーのセグメント値を表示しない。
+    sample_seg=pd.DataFrame(columns=["period"])
     uploaded_seg=st.file_uploader(
         "CSVを読み込む（設定列・セグメントカラー列対応）",
         type=["csv"], key=f"{key}_csv_upload"
@@ -1241,11 +1225,8 @@ with t2: seg_tab("売上高")
 with t3: seg_tab("利益")
 
 with t4:
-    sample_orders=pd.DataFrame({
-        "period":periods,
-        "orders":np.linspace(220000,910000,len(periods)).astype(int),
-        "backlog":np.linspace(310000,1280000,len(periods)).astype(int)
-    })
+    # v81: 起動時はダミーの受注データを表示しない。
+    sample_orders=pd.DataFrame(columns=["period","orders","backlog"])
     uploaded_orders=st.file_uploader(
         "受注高・受注残高CSVを読み込む（設定列つきCSV対応）",
         type=["csv"],key="orders_csv_upload"
@@ -1311,12 +1292,8 @@ with t4:
 
 with t5:
     # ARRは複数プロダクトを積み上げ表示。CSVは period + 各プロダクト列。
-    sample_arr=pd.DataFrame({
-        "period":periods,
-        "Product A":np.linspace(35,180,len(periods)).round(1),
-        "Product B":np.linspace(20,125,len(periods)).round(1),
-        "Product C":np.linspace(8,72,len(periods)).round(1),
-    })
+    # v81: 起動時はダミーのARRデータを表示しない。
+    sample_arr=pd.DataFrame(columns=["period"])
     uploaded_arr=st.file_uploader(
         "ARR CSVを読み込む（period + 各プロダクト列）",
         type=["csv"],key="arr_csv_upload"
