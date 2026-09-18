@@ -554,7 +554,15 @@ def add_callout(ax,x,y,text,color,offset):
 
 def company_chart(df,company,currency,mode,unit,fx,ptype,n,
                   rc,oc,mc,aspect,cw,ch,show_margin,show_latest,dpi,note,subtitle):
-    df=df.dropna(subset=["period","revenue","operating_profit"]).copy()
+    # Keep periods when at least one primary KPI is available.
+    # Previously dropna() required BOTH revenue and operating profit, which
+    # erased every Cambricon row when operating profit was blank.
+    df=df.dropna(subset=["period"]).copy()
+    df["revenue"]=pd.to_numeric(df.get("revenue"),errors="coerce")
+    df["operating_profit"]=pd.to_numeric(df.get("operating_profit"),errors="coerce")
+    df=df[df[["revenue","operating_profit"]].notna().any(axis=1)].copy()
+    if df.empty:
+        raise ValueError("売上高・営業利益の有効なデータを認識できません。会社全体シートの数値と列名を確認してください。")
     df["period"]=df["period"].astype(str)
     keep=choose_periods(df["period"],n)
     df=df[df["period"].isin(keep)].copy()
@@ -563,6 +571,8 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
 
     rr=pd.to_numeric(df["revenue"],errors="coerce")
     oo=pd.to_numeric(df["operating_profit"],errors="coerce")
+    has_revenue=bool(rr.notna().any())
+    has_op=bool(oo.notna().any())
     rev=convert(rr,currency,mode,unit,fx)
     op=convert(oo,currency,mode,unit,fx)
     margin=np.where(rr!=0,oo/rr*100,np.nan)
@@ -578,9 +588,13 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     fig.patch.set_facecolor(THEME["bg"])
     style_axis(ax,11)
 
-    b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
-    b2=ax.bar(x+bw/2,op,bw,color=oc,label="営業利益（左軸）",zorder=3)
-    handles=[b1,b2]; labels=["売上高（左軸）","営業利益（左軸）"]
+    handles=[]; labels=[]
+    if has_revenue:
+        b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
+        handles.append(b1); labels.append("売上高（左軸）")
+    if has_op:
+        b2=ax.bar(x+bw/2,op,bw,color=oc,label="営業利益（左軸）",zorder=3)
+        handles.append(b2); labels.append("営業利益（左軸）")
 
     ax2=None
     if show_margin and has_margin:
@@ -623,16 +637,20 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
             if np.isfinite(margin[-1]) and np.isfinite(margin[-1-lag]):
                 md=margin[-1]-margin[-1-lag]
         margin_value=f"{margin[-1]:.1f}%" if np.isfinite(margin[-1]) else "—"
+        rev_value=f"{fmt(rev.iloc[-1])} {unit}" if np.isfinite(rev.iloc[-1]) else "—"
+        op_value=f"{fmt(op.iloc[-1])} {unit}" if np.isfinite(op.iloc[-1]) else "—"
         specs=[
-            ("売上高",f"{fmt(rev.iloc[-1])} {unit}",f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
-            ("営業利益",f"{fmt(op.iloc[-1])} {unit}",f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
+            ("売上高",rev_value,f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
+            ("営業利益",op_value,f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
             ("営業利益率",margin_value,f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
         ]
         xs=[.055,.365,.675]
         for x0,s in zip(xs,specs):
             add_kpi_card(fig,x0,.69,.27,.14,*s)
-        add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
-        add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
+        if np.isfinite(rev.iloc[-1]):
+            add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
+        if np.isfinite(op.iloc[-1]):
+            add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
         if ax2 is not None and np.isfinite(margin[-1]):
             add_callout(ax2,x[-1],margin[-1],f"{margin[-1]:.1f}%",mc,(40,25))
 
