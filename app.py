@@ -955,7 +955,7 @@ if load_gsheet:
             st.error(str(e))
 
 master_upload=st.file_uploader(
-    "または会社マスターExcelを読み込む（.xlsx / 全タブ一括）", type=["xlsx"], key="master_excel_upload"
+    "または会社マスターExcelを読み込む（.xlsx / .xlsm / 全タブ一括）", type=["xlsx","xlsm"], key="master_excel_upload"
 )
 try:
     with open("company_master_template.xlsx","rb") as f:
