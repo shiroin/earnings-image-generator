@@ -152,6 +152,8 @@ MASTER_SHEETS = {
     "company_annual": "会社全体_年度",
     "segment_revenue_quarterly": "セグメント売上高_四半期",
     "segment_revenue_annual": "セグメント売上高_年度",
+    "segment_revenue2_quarterly": "セグメント売上高2_四半期",
+    "segment_revenue2_annual": "セグメント売上高2_年度",
     "segment_profit_quarterly": "セグメント利益_四半期",
     "segment_profit_annual": "セグメント利益_年度",
     "orders_quarterly": "受注_四半期",
@@ -235,7 +237,7 @@ def read_master_excel(uploaded):
                 kind = str(kind).strip(); item = str(item).strip()
                 if not kind or not item:
                     continue
-                prefix = "segment" if kind == "セグメント" else ("arr" if kind == "ARR" else None)
+                prefix = "segment2" if kind == "セグメント2" else ("segment" if kind == "セグメント" else ("arr" if kind == "ARR" else None))
                 if prefix is None:
                     continue
                 # 表示名とカラーを独立して保存。カラーが空でも表示名は有効。
@@ -313,7 +315,8 @@ def master_meta(settings, section):
     meta.update({k:v for k,v in common.items() if v})
     subtitle_key = {
         "company":"company_subtitle", "segment_revenue":"segment_revenue_subtitle",
-        "segment_profit":"segment_profit_subtitle", "orders":"orders_subtitle", "arr":"arr_subtitle"
+        "segment_revenue2":"segment_revenue2_subtitle", "segment_profit":"segment_profit_subtitle",
+        "orders":"orders_subtitle", "arr":"arr_subtitle"
     }[section]
     if settings.get(subtitle_key):
         subtitle = str(settings[subtitle_key]).strip()
@@ -334,9 +337,9 @@ def master_meta(settings, section):
     else:
         # v59: セグメント売上高・利益は共通の segment_color:<名称> を優先。
         # 旧v58形式も後方互換で読み込む。
-        if section in ("segment_revenue", "segment_profit"):
-            common_prefix = "segment_color:"
-            legacy_prefix = "segment_revenue_color:" if section == "segment_revenue" else "segment_profit_color:"
+        if section in ("segment_revenue", "segment_revenue2", "segment_profit"):
+            common_prefix = "segment2_color:" if section == "segment_revenue2" else "segment_color:"
+            legacy_prefix = "segment_revenue_color:" if section == "segment_revenue" else ("segment2_color:" if section == "segment_revenue2" else "segment_profit_color:")
             for k,v in settings.items():
                 if k.startswith(legacy_prefix) and k[len(legacy_prefix):]:
                     meta[f"{META_SEGMENT_PREFIX}{k[len(legacy_prefix):]}"] = v
@@ -366,7 +369,7 @@ def master_display_names(settings, section):
     """
     if not settings:
         return {}
-    prefix = "arr_display:" if section == "arr" else "segment_display:"
+    prefix = "arr_display:" if section == "arr" else ("segment2_display:" if section == "segment_revenue2" else "segment_display:")
     result = {}
     for k, v in settings.items():
         if not k.startswith(prefix):
@@ -1043,7 +1046,7 @@ else:
     periods=[f"FY{y}" for y in range(1997,2027)]
     mx_allowed=30
 
-t1,t2,t3,t4,t5=st.tabs(["会社全体","セグメント売上高","セグメント利益","受注高・受注残高","ARR"])
+t1,t2,t2b,t3,t4,t5=st.tabs(["会社全体","セグメント売上高","セグメント売上高2","セグメント利益","受注高・受注残高","ARR"])
 
 with t1:
     # v81: 起動時はサンプル数値を表示しない。マスター/CSV未読込なら空表から開始。
@@ -1126,9 +1129,9 @@ with t1:
         st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),"financials.png","image/png")
 
-def seg_tab(kind):
+def seg_tab(kind, dataset=1):
     if kind=="売上高":
-        title="セグメント別 売上高"; key="rev"
+        title="セグメント別 売上高"; key="rev2" if dataset==2 else "rev"
     else:
         title="セグメント別 営業利益"; key="op"
 
@@ -1139,7 +1142,7 @@ def seg_tab(kind):
         type=["csv"], key=f"{key}_csv_upload"
     )
 
-    master_section="segment_revenue" if kind=="売上高" else "segment_profit"
+    master_section=("segment_revenue2" if dataset==2 else "segment_revenue") if kind=="売上高" else "segment_profit"
     seg_meta=master_meta(master_settings,master_section) if master_settings else {}
     seg_master_key=master_period_key(master_section,ptype)
     seg_source=master_sheets.get(seg_master_key,sample_seg)
@@ -1167,7 +1170,7 @@ def seg_tab(kind):
     ed=normalize_numeric_columns(ed)
 
     segs=[c for c in ed.columns if c!="period"]
-    seg_display_names=master_display_names(master_settings, "segment_revenue" if kind=="売上高" else "segment_profit")
+    seg_display_names=master_display_names(master_settings, master_section)
     st.markdown("**セグメントカラー**")
     color_cols=st.columns(min(3,max(len(segs),1)))
     seg_colors={}
@@ -1221,7 +1224,8 @@ def seg_tab(kind):
             "image/png",key="d"+key
         )
 
-with t2: seg_tab("売上高")
+with t2: seg_tab("売上高",1)
+with t2b: seg_tab("売上高",2)
 with t3: seg_tab("利益")
 
 with t4:
