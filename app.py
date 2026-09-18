@@ -566,6 +566,11 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     rev=convert(rr,currency,mode,unit,fx)
     op=convert(oo,currency,mode,unit,fx)
     margin=np.where(rr!=0,oo/rr*100,np.nan)
+    # Some companies/periods can have zero or otherwise unusable revenue,
+    # leaving the entire margin series NaN/inf. Never let that break rendering.
+    margin=np.asarray(margin,dtype=float)
+    margin[~np.isfinite(margin)]=np.nan
+    has_margin=bool(np.isfinite(margin).any())
 
     x=np.arange(len(df)); bw=.36
     fw,fh=fig_size(aspect,cw,ch)
@@ -578,7 +583,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     handles=[b1,b2]; labels=["売上高（左軸）","営業利益（左軸）"]
 
     ax2=None
-    if show_margin:
+    if show_margin and has_margin:
         ax2=ax.twinx()
         ax2.set_facecolor("none")
         line,=ax2.plot(x,margin,color=mc,marker="o",markersize=6,
@@ -615,23 +620,28 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         if len(df)>lag:
             rg=growth(rr.iloc[-1],rr.iloc[-1-lag])
             og=growth(oo.iloc[-1],oo.iloc[-1-lag])
-            md=margin[-1]-margin[-1-lag]
+            if np.isfinite(margin[-1]) and np.isfinite(margin[-1-lag]):
+                md=margin[-1]-margin[-1-lag]
+        margin_value=f"{margin[-1]:.1f}%" if np.isfinite(margin[-1]) else "—"
         specs=[
             ("売上高",f"{fmt(rev.iloc[-1])} {unit}",f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
             ("営業利益",f"{fmt(op.iloc[-1])} {unit}",f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
-            ("営業利益率",f"{margin[-1]:.1f}%",f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
+            ("営業利益率",margin_value,f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
         ]
         xs=[.055,.365,.675]
         for x0,s in zip(xs,specs):
             add_kpi_card(fig,x0,.69,.27,.14,*s)
         add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
         add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
-        if show_margin:
+        if ax2 is not None and np.isfinite(margin[-1]):
             add_callout(ax2,x[-1],margin[-1],f"{margin[-1]:.1f}%",mc,(40,25))
 
     ymin,ymax=ax.get_ylim()
     if ymax>0: ax.set_ylim(ymin,ymax*1.14)
-    if ax2 is not None: ax2.set_ylim(0,max(10,np.nanmax(margin)*1.35))
+    if ax2 is not None:
+        finite_margin=margin[np.isfinite(margin)]
+        if finite_margin.size:
+            ax2.set_ylim(0,max(10,float(finite_margin.max())*1.35))
 
     # Graph band leaves a dedicated note band below it.
     plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
