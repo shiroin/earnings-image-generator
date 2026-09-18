@@ -237,7 +237,18 @@ def read_master_excel(uploaded):
                 kind = str(kind).strip(); item = str(item).strip()
                 if not kind or not item:
                     continue
-                prefix = "segment2" if kind == "セグメント2" else ("segment" if kind == "セグメント" else ("arr" if kind == "ARR" else None))
+                # v85: マスター作成時の「種類」は表記ゆれを許容する。
+                # Oracleのように「事業」と記載したマスターも第1セグメントとして扱う。
+                # NFKC + casefold で全角半角・大文字小文字の差も吸収する。
+                kind_key = unicodedata.normalize("NFKC", kind).replace(" ", "").replace("　", "").casefold()
+                if kind_key in {"セグメント2", "事業2", "segment2", "segment②"}:
+                    prefix = "segment2"
+                elif kind_key in {"セグメント", "事業", "segment", "business", "businesssegment"}:
+                    prefix = "segment"
+                elif kind_key in {"arr", "年間経常収益"}:
+                    prefix = "arr"
+                else:
+                    prefix = None
                 if prefix is None:
                     continue
                 # 表示名とカラーを独立して保存。カラーが空でも表示名は有効。
