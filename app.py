@@ -12,7 +12,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v71 Deploy", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v91", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -159,6 +159,10 @@ MASTER_SHEETS = {
     "segment_profit_annual": "セグメント利益_年度",
     "orders_quarterly": "受注_四半期",
     "orders_annual": "受注_年度",
+    "orders_by_item_quarterly": "品目別受注高_四半期",
+    "orders_by_item_annual": "品目別受注高_年度",
+    "backlog_by_item_quarterly": "品目別受注残高_四半期",
+    "backlog_by_item_annual": "品目別受注残高_年度",
     "arr_quarterly": "ARR_四半期",
     "arr_annual": "ARR_年度",
 }
@@ -248,6 +252,10 @@ def read_master_excel(uploaded):
                     prefix = "segment"
                 elif kind_key in {"arr", "年間経常収益"}:
                     prefix = "arr"
+                elif kind_key in {"品目別受注高", "受注高品目別", "ordersbyitem"}:
+                    prefix = "orders_item"
+                elif kind_key in {"品目別受注残高", "受注残高品目別", "backlogbyitem"}:
+                    prefix = "backlog_item"
                 else:
                     prefix = None
                 if prefix is None:
@@ -328,7 +336,8 @@ def master_meta(settings, section):
     subtitle_key = {
         "company":"company_subtitle", "segment_revenue":"segment_revenue_subtitle",
         "segment_revenue2":"segment_revenue2_subtitle", "segment_profit":"segment_profit_subtitle",
-        "orders":"orders_subtitle", "arr":"arr_subtitle"
+        "orders":"orders_subtitle", "orders_by_item":"orders_by_item_subtitle",
+        "backlog_by_item":"backlog_by_item_subtitle", "arr":"arr_subtitle"
     }[section]
     if settings.get(subtitle_key):
         subtitle = str(settings[subtitle_key]).strip()
@@ -349,9 +358,14 @@ def master_meta(settings, section):
     else:
         # v59: セグメント売上高・利益は共通の segment_color:<名称> を優先。
         # 旧v58形式も後方互換で読み込む。
-        if section in ("segment_revenue", "segment_revenue2", "segment_profit"):
-            common_prefix = "segment2_color:" if section == "segment_revenue2" else "segment_color:"
-            legacy_prefix = "segment_revenue_color:" if section == "segment_revenue" else ("segment2_color:" if section == "segment_revenue2" else "segment_profit_color:")
+        if section in ("segment_revenue", "segment_revenue2", "segment_profit", "orders_by_item", "backlog_by_item"):
+            if section == "orders_by_item":
+                common_prefix = legacy_prefix = "orders_item_color:"
+            elif section == "backlog_by_item":
+                common_prefix = legacy_prefix = "backlog_item_color:"
+            else:
+                common_prefix = "segment2_color:" if section == "segment_revenue2" else "segment_color:"
+                legacy_prefix = "segment_revenue_color:" if section == "segment_revenue" else ("segment2_color:" if section == "segment_revenue2" else "segment_profit_color:")
             # v87: セグメント2は既存の「事業」カラーもフォールバックとして利用。
             # segment2_color があれば最後に上書きし、専用設定を優先する。
             if section == "segment_revenue2":
@@ -387,7 +401,16 @@ def master_display_names(settings, section):
     """
     if not settings:
         return {}
-    prefix = "arr_display:" if section == "arr" else ("segment2_display:" if section == "segment_revenue2" else "segment_display:")
+    if section == "arr":
+        prefix = "arr_display:"
+    elif section == "segment_revenue2":
+        prefix = "segment2_display:"
+    elif section == "orders_by_item":
+        prefix = "orders_item_display:"
+    elif section == "backlog_by_item":
+        prefix = "backlog_item_display:"
+    else:
+        prefix = "segment_display:"
     result = {}
 
     # v87: セグメント2は、専用の「セグメント2/事業2」設定を最優先しつつ、
@@ -1019,7 +1042,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v81 Deploy")
+st.title("決算画像ジェネレーター v91")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -1135,7 +1158,7 @@ else:
     periods=[f"FY{y}" for y in range(1997,2027)]
     mx_allowed=30
 
-t1,t2,t2b,t3,t4,t5=st.tabs(["会社全体","セグメント売上高","セグメント売上高2","セグメント利益","受注高・受注残高","ARR"])
+t1,t2,t2b,t3,t4,t4o,t4b,t5=st.tabs(["会社全体","セグメント売上高","セグメント売上高2","セグメント利益","受注・受注残高","品目別 受注高","品目別 受注残高","ARR"])
 
 with t1:
     # v81: 起動時はサンプル数値を表示しない。マスター/CSV未読込なら空表から開始。
@@ -1385,6 +1408,80 @@ with t4:
         st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),
                            "orders_backlog.png","image/png",key="download_orders")
+
+def item_orders_tab(section, title, key, filename):
+    """品目別の受注高・受注残高を、可変列の棒グラフとして描画する。"""
+    sample=pd.DataFrame(columns=["period"])
+    uploaded=st.file_uploader(
+        f"{title} CSVを読み込む（period + 各品目列）",
+        type=["csv"],key=f"{key}_csv_upload"
+    )
+    meta=master_meta(master_settings,section) if master_settings else {}
+    master_key=master_period_key(section,ptype)
+    source=master_sheets.get(master_key,sample)
+    if uploaded is not None and master_key not in master_sheets:
+        try:
+            loaded,meta=read_uploaded_csv(uploaded)
+            if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
+                source=loaded
+            else:
+                st.error(f"{title} CSVには period 列と、1列以上の品目列が必要です。")
+        except Exception as e:
+            st.error(str(e))
+
+    csv_currency,csv_mode,csv_unit=resolve_csv_display(meta,currency,mode,unit)
+    if meta:
+        st.caption(f"ファイル設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
+
+    edited=st.data_editor(source,use_container_width=True,num_rows="dynamic",key=f"{key}_editor")
+    edited=normalize_numeric_columns(edited)
+    items=[c for c in edited.columns if c!="period"]
+    display_names=master_display_names(master_settings,section)
+    st.markdown("**品目カラー**")
+    color_cols=st.columns(min(3,max(len(items),1)))
+    item_colors={}
+    for i,item in enumerate(items):
+        configured=normalize_color(
+            meta.get(f"{META_SEGMENT_PREFIX}{item}"),
+            THEME["segment_palette"][i%len(THEME["segment_palette"])]
+        )
+        with color_cols[i%len(color_cols)]:
+            picked=st.color_picker(
+                display_name_for(display_names,item),configured,key=f"{key}_color_{item}"
+            )
+        item_colors[item]=normalize_color(meta.get(f"{META_SEGMENT_PREFIX}{item}"),picked)
+
+    available=max(len(edited.dropna(subset=["period"])),1)
+    count=period_count_input("表示する期間数",available,ptype,f"n{key}",mx_allowed)
+    style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key=f"style_{key}")
+    labels=st.checkbox("品目別の最新値・前年比を表示",True,key=f"latest_{key}")
+    default_subtitle=meta.get(META_SUBTITLE) or f"{title}の推移"
+    subtitle=st.text_input("サブタイトル",default_subtitle,key=f"subtitle_{key}")
+
+    downloadable=segment_csv_for_download(edited,csv_currency,csv_unit,item_colors,subtitle)
+    d1,d2=st.columns(2)
+    with d1:
+        st.download_button("CSVをダウンロード",
+            downloadable.to_csv(index=False).encode("utf-8-sig"),
+            f"{filename}.csv","text/csv",key=f"csv_{key}",use_container_width=True)
+    with d2:
+        generate=st.button(f"{title}グラフを生成",type="primary",
+                           use_container_width=True,key=f"generate_{key}")
+    if generate:
+        fig,png=segment_chart(
+            edited,company,csv_currency,csv_mode,csv_unit,fx,int(count),style,title,
+            ptype,aspect,cw,ch,labels,dpi,note,item_colors,subtitle,
+            show_total=False,display_names=display_names
+        )
+        st.image(png.getvalue(),width="stretch")
+        st.download_button("PNGをダウンロード",png.getvalue(),f"{filename}.png",
+                           "image/png",key=f"download_{key}")
+
+with t4o:
+    item_orders_tab("orders_by_item","品目別 受注高","orders_item","orders_by_item")
+
+with t4b:
+    item_orders_tab("backlog_by_item","品目別 受注残高","backlog_item","backlog_by_item")
 
 
 with t5:
