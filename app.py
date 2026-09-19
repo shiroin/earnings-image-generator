@@ -67,6 +67,7 @@ META_OPERATING_PROFIT_COLOR="__operating_profit_color"
 META_MARGIN_COLOR="__margin_color"  # optional / backward-compatible extension
 META_ORDERS_COLOR="__orders_color"
 META_BACKLOG_COLOR="__backlog_color"
+META_BACKLOG_LABEL="__backlog_label"
 META_SUBTITLE="__subtitle"
 META_SEGMENT_PREFIX="__color_"
 
@@ -343,7 +344,7 @@ def master_meta(settings, section):
         for mk,sk in [(META_REVENUE_COLOR,"revenue_color"),(META_OPERATING_PROFIT_COLOR,"operating_profit_color"),(META_MARGIN_COLOR,"margin_color")]:
             if settings.get(sk): meta[mk]=settings[sk]
     elif section=="orders":
-        for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_BACKLOG_COLOR,"backlog_color")]:
+        for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_BACKLOG_COLOR,"backlog_color"),(META_BACKLOG_LABEL,"backlog_label")]:
             if settings.get(sk): meta[mk]=settings[sk]
     else:
         # v59: セグメント売上高・利益は共通の segment_color:<名称> を優先。
@@ -455,12 +456,13 @@ def company_csv_for_download(df, currency, unit, revenue_color, operating_profit
         meta[META_SUBTITLE] = str(subtitle)
     return add_metadata_columns(df, meta)
 
-def orders_csv_for_download(df, currency, unit, orders_color, backlog_color, subtitle=None):
+def orders_csv_for_download(df, currency, unit, orders_color, backlog_color, subtitle=None, backlog_label="受注残高"):
     meta = {
         META_INPUT_CURRENCY: currency,
         META_DISPLAY_UNIT: unit,
         META_ORDERS_COLOR: normalize_color(orders_color, THEME["revenue"]),
         META_BACKLOG_COLOR: normalize_color(backlog_color, THEME["profit"]),
+        META_BACKLOG_LABEL: str(backlog_label or "受注残高").strip(),
     }
     if subtitle is not None:
         meta[META_SUBTITLE] = str(subtitle)
@@ -728,7 +730,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     return fig,buf
 
 def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
-                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note,subtitle):
+                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note,subtitle,backlog_label="受注残高"):
     df=df.dropna(subset=["period"]).copy()
     df["period"]=df["period"].astype(str)
     keep=choose_periods(df["period"],n)
@@ -755,16 +757,16 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     if has_orders and has_backlog:
         bw=.36
         b1=ax.bar(x-bw/2,orders,bw,color=orders_color,label="受注高",zorder=3)
-        b2=ax.bar(x+bw/2,backlog,bw,color=backlog_color,label="受注残高",zorder=3)
-        handles.extend([b1,b2]); labels.extend(["受注高","受注残高"])
+        b2=ax.bar(x+bw/2,backlog,bw,color=backlog_color,label=backlog_label,zorder=3)
+        handles.extend([b1,b2]); labels.extend(["受注高",backlog_label])
     elif has_orders:
         bw=.48
         b1=ax.bar(x,orders,bw,color=orders_color,label="受注高",zorder=3)
         handles.append(b1); labels.append("受注高")
     elif has_backlog:
         bw=.48
-        b2=ax.bar(x,backlog,bw,color=backlog_color,label="受注残高",zorder=3)
-        handles.append(b2); labels.append("受注残高")
+        b2=ax.bar(x,backlog,bw,color=backlog_color,label=backlog_label,zorder=3)
+        handles.append(b2); labels.append(backlog_label)
     else:
         bw=.48
 
@@ -801,13 +803,13 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
         if has_orders and has_backlog:
             add_kpi_card(fig,.17,.69,.27,.14,"受注高",f"{fmt(orders.iloc[-1])} {unit}",
                          f"前年比 {og:+.1f}%" if og is not None else "",orders_color,"#F1F6FF")
-            add_kpi_card(fig,.56,.69,.27,.14,"受注残高",f"{fmt(backlog.iloc[-1])} {unit}",
+            add_kpi_card(fig,.56,.69,.27,.14,backlog_label,f"{fmt(backlog.iloc[-1])} {unit}",
                          f"前年比 {bg:+.1f}%" if bg is not None else "",backlog_color,"#F0FAF8")
         elif has_orders:
             add_kpi_card(fig,.365,.69,.27,.14,"受注高",f"{fmt(orders.iloc[-1])} {unit}",
                          f"前年比 {og:+.1f}%" if og is not None else "",orders_color,"#F1F6FF")
         elif has_backlog:
-            add_kpi_card(fig,.365,.69,.27,.14,"受注残高",f"{fmt(backlog.iloc[-1])} {unit}",
+            add_kpi_card(fig,.365,.69,.27,.14,backlog_label,f"{fmt(backlog.iloc[-1])} {unit}",
                          f"前年比 {bg:+.1f}%" if bg is not None else "",backlog_color,"#F0FAF8")
 
         if has_orders and pd.notna(orders.iloc[-1]):
@@ -1354,12 +1356,16 @@ with t4:
         backlog_color=st.color_picker("受注残高カラー",default_backlog_color,key="backlog_color")
     effective_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),orders_color)
     effective_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),backlog_color)
+    default_backlog_label=str(orders_meta.get(META_BACKLOG_LABEL) or "受注残高").strip()
+    backlog_label=st.text_input("受注残高の表示名",default_backlog_label,key="backlog_label",
+                                help="例：受注残高 / RPO / 受注残高（RPO）")
+    backlog_label=str(backlog_label or "受注残高").strip()
     show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
     default_orders_subtitle=orders_meta.get(META_SUBTITLE) or "受注高・受注残高の推移"
     orders_subtitle=st.text_input("サブタイトル",default_orders_subtitle,key="orders_subtitle")
 
     orders_download=orders_csv_for_download(
-        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color,orders_subtitle
+        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color,orders_subtitle,backlog_label
     )
     od1,od2=st.columns(2)
     with od1:
@@ -1374,7 +1380,7 @@ with t4:
         fig,png=orders_chart(
             oed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(on),
             effective_orders_color,effective_backlog_color,
-            aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle
+            aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle,backlog_label
         )
         st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),
