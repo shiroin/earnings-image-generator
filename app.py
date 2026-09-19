@@ -827,6 +827,314 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     buf.seek(0)
     return fig,buf
 
+def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
+                  aspect,cw,ch,labels_on,dpi,note,segment_colors,subtitle,
+                  show_total=False,total_name="全社ARR",display_names=None):
+
+    display_names = display_names or {}
+    raw=df.copy()
+    segs=[c for c in raw.columns if c!="period" and not raw[c].isna().all()]
+    keep=choose_periods(raw["period"],n)
+    raw=raw[raw["period"].astype(str).isin(keep)].copy()
+    raw["period"]=pd.Categorical(raw["period"].astype(str),categories=keep,ordered=True)
+    raw=raw.sort_values("period").reset_index(drop=True)
+
+    disp=raw.copy()
+    for c in segs:
+        disp[c]=convert(raw[c],currency,mode,unit,fx)
+
+    fw,fh=fig_size(aspect,cw,ch)
+    fig,ax=plt.subplots(figsize=(fw,fh))
+    fig.patch.set_facecolor(THEME["bg"])
+    style_axis(ax,11)
+
+    colors=[segment_colors.get(s,THEME["segment_palette"][i%len(THEME["segment_palette"])])
+            for i,s in enumerate(segs)]
+    x=np.arange(len(disp))
+    latest_positions=[]
+
+    if style=="積み上げ":
+        pos=np.zeros(len(disp)); neg=np.zeros(len(disp))
+        for i,s in enumerate(segs):
+            vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
+            bottoms=np.where(vals>=0,pos,neg)
+            ax.bar(x,vals,bottom=bottoms,width=.68,color=colors[i],label=display_name_for(display_names,s),zorder=3)
+            if len(disp): latest_positions.append((s,vals[-1],bottoms[-1]+vals[-1]/2,colors[i]))
+            pos+=np.where(vals>=0,vals,0); neg+=np.where(vals<0,vals,0)
+    else:
+        ns=max(len(segs),1); bw=.88/ns
+        offsets=(np.arange(ns)-(ns-1)/2)*bw
+        for i,s in enumerate(segs):
+            vals=pd.to_numeric(disp[s],errors="coerce").fillna(0).values
+            xpos=x+offsets[i]
+            ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=display_name_for(display_names,s),zorder=3)
+            if len(disp): latest_positions.append((s,vals[-1],vals[-1],colors[i]))
+
+    plist=disp["period"].astype(str).tolist()
+    ax.set_xticks(x)
+    ax.set_xticklabels(period_labels(plist,ptype),fontsize=16)
+    ax.text(-.045,1.01,f"（{unit}）",transform=ax.transAxes,
+            fontsize=17,color=THEME["text"])
+
+    # For stacked bars, the visual stack is bottom=first segment, top=last segment.
+    # Reverse only the legend so its top-to-bottom order matches the bar's top-to-bottom order.
+    handles, legend_labels = ax.get_legend_handles_labels()
+    if style=="積み上げ":
+        handles = handles[::-1]
+        legend_labels = legend_labels[::-1]
+    leg=ax.legend(handles,legend_labels,loc="upper left",bbox_to_anchor=(0.01,0.99),ncol=1,
+                  fontsize=14,frameon=True,handlelength=2.1,
+                  labelspacing=.50,borderpad=.65)
+    leg.get_frame().set_facecolor(THEME["bg"])
+    leg.get_frame().set_edgecolor(THEME["card_border"])
+
+    # 凡例が棒に重ならないよう、凡例の行数に応じて上側に余白を確保する。
+    # 文字サイズも少し小さくして、縦型凡例の読みやすさは維持する。
+    if legend_labels:
+        ymin, ymax = ax.get_ylim()
+        span = max(ymax - ymin, 1.0)
+        legend_headroom = min(0.40, 0.06 + 0.035 * len(legend_labels))
+        ax.set_ylim(ymin, ymax + span * legend_headroom)
+
+    # Compact title/subtitle -> graph spacing
+    fig.text(.035,.965,company,fontsize=38,fontweight="bold",
+             color=THEME["text"],ha="left",va="top")
+    if subtitle and str(subtitle).strip():
+        fig.text(.035,.895,str(subtitle).strip(),fontsize=24,fontweight="bold",
+                 color=THEME["muted"],ha="left",va="top")
+
+    lag=4 if ptype=="四半期" else 1
+
+    ratio = fw / fh
+    portrait = ratio <= 0.80
+    squareish = 0.80 < ratio <= 1.12
+
+    if portrait:
+        plt.subplots_adjust(left=.10,right=.94,bottom=.47,top=.80)
+        if len(disp): ax.set_xlim(-0.65, len(disp)-0.25)
+    elif squareish:
+        # 1:1専用。右側の最新値パネルに十分な幅を確保。
+        plt.subplots_adjust(left=.065,right=.69,bottom=.14,top=.80)
+        if len(disp): ax.set_xlim(-0.65, len(disp)-0.05)
+    else:
+        plt.subplots_adjust(left=.07,right=.755,bottom=.14,top=.82)
+        if len(disp): ax.set_xlim(-0.65, len(disp)-0.10)
+
+    if labels_on and len(disp):
+        ordered=list(reversed(segs))
+
+        if portrait:
+            fig.text(.39,.425,"最新値",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"])
+            fig.text(.39,.397,f"（{unit}）",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"])
+            fig.text(.68,.425,"前年比\n成長率",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"],linespacing=1.05)
+            y_top=.345; step=min(.058,.27/max(len(ordered),1))
+            value_x=.39; yoy_x=.68; value_fs=18; yoy_fs=16
+        elif squareish:
+            # 1:1: ヘッダーとカードを中央寄せし、2列を明確に分離。
+            fig.text(.775,.800,"最新値",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"])
+            fig.text(.775,.765,f"（{unit}）",ha="center",va="top",
+                     fontsize=14.5,fontweight="bold",color=THEME["text"])
+            fig.text(.915,.800,"前年比\n成長率",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"],linespacing=1.02)
+            y_top=.680; step=min(.088,.44/max(len(ordered),1))
+            value_x=.775; yoy_x=.915; value_fs=16.5; yoy_fs=15
+        else:
+            fig.text(.835,.820,"最新値",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"])
+            fig.text(.835,.785,f"（{unit}）",ha="center",va="top",
+                     fontsize=15.5,fontweight="bold",color=THEME["text"])
+            fig.text(.925,.820,"前年比\n成長率",ha="center",va="top",
+                     fontsize=16.5,fontweight="bold",color=THEME["text"],linespacing=1.05)
+            y_top=.700; step=min(.092,.46/max(len(ordered),1))
+            value_x=.835; yoy_x=.925; value_fs=19; yoy_fs=16
+
+        for j,s in enumerate(ordered):
+            i=segs.index(s)
+            color=colors[i]
+            v=pd.to_numeric(disp[s],errors="coerce").iloc[-1]
+            yoy=None
+            if len(raw)>lag:
+                yoy=growth(pd.to_numeric(raw[s],errors="coerce").iloc[-1],
+                           pd.to_numeric(raw[s],errors="coerce").iloc[-1-lag])
+            y=y_top-j*step
+            fig.text(value_x,y,f"{fmt(v)} {unit}",ha="center",va="center",
+                     fontsize=value_fs,fontweight="bold",color="white",
+                     bbox=dict(boxstyle="round,pad=.34",fc=color,ec=color))
+            fig.text(yoy_x,y,f"{yoy:+.1f}%" if yoy is not None else "—",
+                     ha="center",va="center",fontsize=yoy_fs,fontweight="bold",
+                     color=color,
+                     bbox=dict(boxstyle="round,pad=.28",fc=color+"18",ec="none"))
+
+    # ARRなどの積み上げグラフでは、最新棒の上に全社合計とYoYを表示できる。
+    if show_total and style=="積み上げ" and len(disp) and segs:
+        total_disp=disp[segs].apply(pd.to_numeric,errors="coerce").fillna(0).sum(axis=1)
+        total_raw=raw[segs].apply(pd.to_numeric,errors="coerce").fillna(0).sum(axis=1)
+        total_yoy=None
+        if len(raw)>lag:
+            total_yoy=growth(total_raw.iloc[-1],total_raw.iloc[-1-lag])
+        if pd.notna(total_disp.iloc[-1]):
+            # 全社ARRカードは最新棒の真上ではなく、グラフ右上の専用領域に固定。
+            # 右側のプロダクト別最新値パネルと重ならず、棒とは縦線で接続する。
+            total_text=f"{total_name}\n{fmt(total_disp.iloc[-1])} {unit}"
+            if total_yoy is not None:
+                total_text += f"\nYoY {total_yoy:+.1f}%"
+
+            if portrait:
+                card_xytext=(0.78, 1.16)
+                total_fs=17
+            elif squareish:
+                card_xytext=(0.78, 0.94)
+                total_fs=19
+            else:
+                card_xytext=(0.82, 0.93)
+                total_fs=20
+
+            ax.annotate(
+                total_text,
+                xy=(x[-1],total_disp.iloc[-1]), xycoords="data",
+                xytext=card_xytext, textcoords="axes fraction",
+                ha="center",va="center",fontsize=total_fs,fontweight="bold",
+                color="white",linespacing=1.28,
+                bbox=dict(boxstyle="round,pad=.60",fc=THEME["text"],ec=THEME["text"]),
+                arrowprops=dict(arrowstyle="-",color=THEME["text"],lw=1.4,
+                                connectionstyle="arc3,rad=0"),
+                zorder=12,clip_on=False,annotation_clip=False
+            )
+
+    # Give plot extra headroom when a total label is shown above the latest stacked bar.
+    ymin,ymax=ax.get_ylim()
+    if ymax>0:
+        ax.set_ylim(ymin,ymax*(1.18 if show_total and style=="積み上げ" else 1.08))
+
+    note_text(fig,note,currency,mode,fx,y=.022)
+
+    buf=io.BytesIO()
+    fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
+    buf.seek(0)
+    return fig,buf
+
+st.title("決算画像ジェネレーター v81 Deploy")
+st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
+
+st.subheader("企業マスター")
+gsheet_url=st.text_input("Google Sheets / Drive URL",placeholder="https://docs.google.com/spreadsheets/d/... または https://drive.google.com/file/d/...")
+col_g1,col_g2=st.columns([1,3])
+with col_g1:
+    load_gsheet=st.button("Google Sheetsから読み込む",type="primary",use_container_width=True)
+with col_g2:
+    st.caption("Google Sheets URL / Google DriveファイルURLの両方に対応。「リンクを知っている全員が閲覧可」など外部閲覧可能にしてください。編集権限は不要です。")
+
+if load_gsheet:
+    if not gsheet_url.strip():
+        st.error("GoogleスプレッドシートURLを入力してください。")
+    else:
+        try:
+            gs_sheets,gs_settings=read_google_sheet_master(gsheet_url)
+            st.session_state["google_master_sheets"]=gs_sheets
+            st.session_state["google_master_settings"]=gs_settings
+            st.session_state["google_master_url"]=gsheet_url
+            st.success(f"Google Sheetsマスターを読み込みました：{len(gs_sheets)}データシート")
+        except Exception as e:
+            st.error(str(e))
+
+master_upload=st.file_uploader(
+    "または会社マスターExcelを読み込む（.xlsx / .xlsm / 全タブ一括）", type=["xlsx","xlsm"], key="master_excel_upload"
+)
+try:
+    with open("company_master_template.xlsx","rb") as f:
+        st.download_button("会社マスターExcel テンプレートをダウンロード", f.read(), "company_master_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+except FileNotFoundError:
+    pass
+master_sheets=st.session_state.get("google_master_sheets",{}).copy()
+master_settings=st.session_state.get("google_master_settings",{}).copy()
+if master_upload is not None:
+    try:
+        master_sheets, master_settings = read_master_excel(master_upload)
+        st.success(f"Excelマスターを読み込みました：{len(master_sheets)}データシート")
+    except Exception as e:
+        st.error(str(e))
+elif master_sheets:
+    st.info("Google Sheetsマスターを使用中。更新後は「Google Sheetsから読み込む」を押すと最新データを再取得します。")
+
+ptype=st.radio("期間区分",["四半期","年度"],horizontal=True)
+
+# v76: 期間区分を切り替えたら、会社全体のサブタイトルも必ず連動させる。
+# text_input は同じ key の値を session_state に保持するため、
+# モード変更を検知して widget 描画前に値を更新する。
+_mode_subtitle = "四半期業績" if ptype == "四半期" else "年度業績"
+_prev_ptype = st.session_state.get("_company_subtitle_ptype")
+if _prev_ptype is None:
+    # 初回表示も期間区分に対応した標準タイトルを使う。
+    st.session_state["company_subtitle"] = _mode_subtitle
+elif _prev_ptype != ptype:
+    st.session_state["company_subtitle"] = _mode_subtitle
+st.session_state["_company_subtitle_ptype"] = ptype
+
+with st.sidebar:
+    company=st.text_input("企業名",master_settings.get("company_name", ""))
+    note=st.text_input("注意書き",master_settings.get("note","※ 最新期は会社予想"))
+
+    currency_options=["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"]
+    master_currency=str(master_settings.get("input_currency","JPY")).upper()
+    if master_currency not in currency_options:
+        master_currency="JPY"
+    currency=st.selectbox("CSVの入力通貨",currency_options,index=currency_options.index(master_currency))
+
+    # マスターの display_unit をUI初期値にも反映する。
+    # 外貨で「億ドル」等なら現地通貨、「億円」等なら円換算を自動選択。
+    master_display_unit=str(master_settings.get("display_unit","") or "").strip()
+    if master_display_unit == "億（現地通貨）":
+        master_display_unit = DEFAULT_LOCAL.get(currency, "億円")
+    if currency=="JPY":
+        master_mode="現地通貨"
+    elif master_display_unit in JPY_UNITS:
+        master_mode="円換算"
+    else:
+        master_mode="現地通貨"
+    mode_options=["現地通貨","円換算"]
+    mode=st.radio("グラフの通貨表示",mode_options,index=mode_options.index(master_mode),horizontal=True)
+    usd=st.number_input("USD/JPY",0.01,value=150.0,step=.1)
+    eur=st.number_input("EUR/JPY",0.01,value=165.0,step=.1)
+    cny=st.number_input("CNY/JPY",0.01,value=21.0,step=.1)
+    dkk=st.number_input("DKK/JPY",0.0001,value=23.5,step=.1)
+    krw=st.number_input("KRW/JPY",0.0001,value=0.11,step=.001,format="%.4f")
+    nok=st.number_input("NOK/JPY",0.0001,value=14.0,step=.1)
+    sek=st.number_input("SEK/JPY",0.0001,value=15.5,step=.1)
+    chf=st.number_input("CHF/JPY",0.0001,value=185.0,step=.1)
+    twd=st.number_input("TWD/JPY",0.0001,value=4.9,step=.01)
+    hkd=st.number_input("HKD/JPY",0.0001,value=19.2,step=.01)
+    fx={"USD":usd,"EUR":eur,"CNY":cny,"DKK":dkk,"KRW":krw,"NOK":nok,"SEK":sek,"CHF":chf,"TWD":twd,"HKD":hkd,"JPY":1.0}
+
+    units=list(JPY_UNITS.keys()) if mode=="円換算" else list(LOCAL_UNITS[currency].keys())
+    default="億円" if mode=="円換算" else DEFAULT_LOCAL[currency]
+    # 設定シートの display_unit が現在の通貨/表示モードで有効なら最優先。
+    # 例: input_currency=USD, display_unit=億ドル → UIも億ドルで開始。
+    preferred_unit=master_display_unit if master_display_unit in units else default
+    unit=st.selectbox("表示単位",units,index=units.index(preferred_unit))
+
+    aspect=st.selectbox("縦横比",["1:1","16:9","4:3","3:2","9:16","カスタム"])
+    cw,ch=16.0,9.0
+    if aspect=="カスタム":
+        cw=st.number_input("横幅",5.0,30.0,16.0,.5)
+        ch=st.number_input("高さ",5.0,30.0,9.0,.5)
+    dpi=st.select_slider("解像度",[120,180,220,300],value=220)
+
+if ptype=="四半期":
+    periods=["2019/9","2019/12","2020/3","2020/6","2020/9","2020/12",
+             "2021/3","2021/6","2021/9","2021/12","2022/3","2022/6","2022/9","2022/12",
+             "2023/3","2023/6","2023/9","2023/12","2024/3","2024/6","2024/9","2024/12",
+             "2025/3","2025/6","2025/9","2025/12","2026/3","2026/6","2026/9","2026/12"]
+    mx_allowed=30
+else:
+    periods=[f"FY{y}" for y in range(1997,2027)]
+    mx_allowed=30
+
+t1,t2,t2b,t3,t4,t5=st.tabs(["会社全体","セグメント売上高","セグメント売上高2","セグメント利益","受注高・受注残高","ARR"])
+
 with t1:
     # v81: 起動時はサンプル数値を表示しない。マスター/CSV未読込なら空表から開始。
     sample_company=pd.DataFrame(columns=["period","revenue","operating_profit"])
@@ -1021,11 +1329,7 @@ with t4:
         try:
             loaded,orders_meta=read_uploaded_csv(uploaded_orders)
             cols=set(loaded.columns)
-            if "period" in cols and ({"orders","backlog"} & cols):
-                if "orders" not in loaded.columns:
-                    loaded["orders"]=np.nan
-                if "backlog" not in loaded.columns:
-                    loaded["backlog"]=np.nan
+            if "period" in cols and ({"orders", "backlog"} & cols):
                 orders_source=loaded
             else:
                 st.error("CSVには period と、orders / backlog の少なくとも一方が必要です。")
