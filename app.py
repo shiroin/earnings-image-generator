@@ -12,7 +12,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v91", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v92", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -65,6 +65,8 @@ META_DISPLAY_UNIT="__display_unit"
 META_REVENUE_COLOR="__revenue_color"
 META_OPERATING_PROFIT_COLOR="__operating_profit_color"
 META_MARGIN_COLOR="__margin_color"  # optional / backward-compatible extension
+META_PROFIT_COLUMN="__profit_column"
+META_PROFIT_LABEL="__profit_label"
 META_ORDERS_COLOR="__orders_color"
 META_BACKLOG_COLOR="__backlog_color"
 META_BACKLOG_LABEL="__backlog_label"
@@ -350,7 +352,7 @@ def master_meta(settings, section):
         }
         meta[META_SUBTITLE] = legacy_subtitle_fixes.get(subtitle, subtitle)
     if section=="company":
-        for mk,sk in [(META_REVENUE_COLOR,"revenue_color"),(META_OPERATING_PROFIT_COLOR,"operating_profit_color"),(META_MARGIN_COLOR,"margin_color")]:
+        for mk,sk in [(META_REVENUE_COLOR,"revenue_color"),(META_OPERATING_PROFIT_COLOR,"operating_profit_color"),(META_MARGIN_COLOR,"margin_color"),(META_PROFIT_COLUMN,"profit_column"),(META_PROFIT_LABEL,"profit_label")]:
             if settings.get(sk): meta[mk]=settings[sk]
     elif section=="orders":
         for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_BACKLOG_COLOR,"backlog_color"),(META_BACKLOG_LABEL,"backlog_label")]:
@@ -466,12 +468,14 @@ def add_metadata_columns(df, meta_pairs):
             out.loc[out.index[0], key] = value
     return out
 
-def company_csv_for_download(df, currency, unit, revenue_color, operating_profit_color, margin_color=None, subtitle=None):
+def company_csv_for_download(df, currency, unit, revenue_color, operating_profit_color, margin_color=None, subtitle=None, profit_column="operating_profit", profit_label="営業利益"):
     meta = {
         META_INPUT_CURRENCY: currency,
         META_DISPLAY_UNIT: unit,
         META_REVENUE_COLOR: normalize_color(revenue_color, THEME["revenue"]),
         META_OPERATING_PROFIT_COLOR: normalize_color(operating_profit_color, THEME["profit"]),
+        META_PROFIT_COLUMN: str(profit_column or "operating_profit").strip(),
+        META_PROFIT_LABEL: str(profit_label or "営業利益").strip(),
     }
     if margin_color is not None:
         meta[META_MARGIN_COLOR] = normalize_color(margin_color, THEME["margin"])
@@ -634,17 +638,38 @@ def add_callout(ax,x,y,text,color,offset):
         arrowprops=dict(arrowstyle="-",color=color,lw=1.4),zorder=10
     )
 
+PROFIT_COLUMN_LABELS = {
+    "operating_profit":"営業利益", "operating_income":"営業利益",
+    "income_before_income_taxes":"税引前利益", "income_before_taxes":"税引前利益",
+    "pretax_income":"税引前利益", "pre_tax_income":"税引前利益",
+    "net_income":"純利益", "net_profit":"純利益", "profit_attributable_to_owners":"親会社株主帰属利益"
+}
+
+def resolve_profit_metric(df, meta=None):
+    meta = meta or {}
+    configured = str(meta.get(META_PROFIT_COLUMN) or "").strip()
+    candidates = [configured] if configured else []
+    candidates += [c for c in PROFIT_COLUMN_LABELS if c not in candidates]
+    profit_col = next((c for c in candidates if c in df.columns), None)
+    if profit_col is None:
+        others=[c for c in df.columns if c not in {"period","revenue"} and not str(c).startswith(META_PREFIX)]
+        profit_col=others[0] if len(others)==1 else None
+    if profit_col is None:
+        return None, str(meta.get(META_PROFIT_LABEL) or "利益").strip()
+    label=str(meta.get(META_PROFIT_LABEL) or PROFIT_COLUMN_LABELS.get(profit_col) or profit_col).strip()
+    return profit_col,label
+
 def company_chart(df,company,currency,mode,unit,fx,ptype,n,
-                  rc,oc,mc,aspect,cw,ch,show_margin,show_latest,dpi,note,subtitle):
+                  rc,oc,mc,aspect,cw,ch,show_margin,show_latest,dpi,note,subtitle,profit_column="operating_profit",profit_label="営業利益"):
     # Keep periods when at least one primary KPI is available.
     # Previously dropna() required BOTH revenue and operating profit, which
     # erased every Cambricon row when operating profit was blank.
     df=df.dropna(subset=["period"]).copy()
     df["revenue"]=pd.to_numeric(df.get("revenue"),errors="coerce")
-    df["operating_profit"]=pd.to_numeric(df.get("operating_profit"),errors="coerce")
-    df=df[df[["revenue","operating_profit"]].notna().any(axis=1)].copy()
+    df[profit_column]=pd.to_numeric(df.get(profit_column),errors="coerce")
+    df=df[df[["revenue",profit_column]].notna().any(axis=1)].copy()
     if df.empty:
-        raise ValueError("売上高・営業利益の有効なデータを認識できません。会社全体シートの数値と列名を確認してください。")
+        raise ValueError("売上高・利益の有効なデータを認識できません。会社全体シートの数値と列名を確認してください。")
     df["period"]=df["period"].astype(str)
     keep=choose_periods(df["period"],n)
     df=df[df["period"].isin(keep)].copy()
@@ -652,7 +677,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     df=df.sort_values("period").reset_index(drop=True)
 
     rr=pd.to_numeric(df["revenue"],errors="coerce")
-    oo=pd.to_numeric(df["operating_profit"],errors="coerce")
+    oo=pd.to_numeric(df[profit_column],errors="coerce")
     has_revenue=bool(rr.notna().any())
     has_op=bool(oo.notna().any())
     rev=convert(rr,currency,mode,unit,fx)
@@ -675,8 +700,8 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
         handles.append(b1); labels.append("売上高（左軸）")
     if has_op:
-        b2=ax.bar(x+bw/2,op,bw,color=oc,label="営業利益（左軸）",zorder=3)
-        handles.append(b2); labels.append("営業利益（左軸）")
+        b2=ax.bar(x+bw/2,op,bw,color=oc,label=f"{profit_label}（左軸）",zorder=3)
+        handles.append(b2); labels.append(f"{profit_label}（左軸）")
 
     ax2=None
     if show_margin and has_margin:
@@ -684,12 +709,12 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         ax2.set_facecolor("none")
         line,=ax2.plot(x,margin,color=mc,marker="o",markersize=6,
                        markeredgecolor="white",markeredgewidth=.7,
-                       linewidth=2.7,zorder=6,label="営業利益率（右軸）")
+                       linewidth=2.7,zorder=6,label=f"{profit_label}率（右軸）")
         ax2.yaxis.set_major_formatter(FuncFormatter(lambda v,pos:f"{v:.0f}%"))
         ax2.tick_params(axis="y",colors=THEME["text"],labelsize=11,length=0)
         for s in ["top","left"]: ax2.spines[s].set_visible(False)
         ax2.spines["right"].set_color(THEME["axis"])
-        handles.append(line); labels.append("営業利益率（右軸）")
+        handles.append(line); labels.append(f"{profit_label}率（右軸）")
 
     periods=df["period"].astype(str).tolist()
     ax.set_xticks(x)
@@ -723,8 +748,8 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         op_value=f"{fmt(op.iloc[-1])} {unit}" if np.isfinite(op.iloc[-1]) else "—"
         specs=[
             ("売上高",rev_value,f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
-            ("営業利益",op_value,f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
-            ("営業利益率",margin_value,f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
+            (profit_label,op_value,f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
+            (f"{profit_label}率",margin_value,f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
         ]
         xs=[.055,.365,.675]
         for x0,s in zip(xs,specs):
@@ -1042,7 +1067,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v91")
+st.title("決算画像ジェネレーター v92")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -1175,11 +1200,11 @@ with t1:
     if uploaded_company is not None and company_master_key not in master_sheets:
         try:
             loaded, company_meta=read_uploaded_csv(uploaded_company)
-            required={"period","revenue","operating_profit"}
-            if required.issubset(set(loaded.columns)):
+            profit_col_check, _ = resolve_profit_metric(loaded, company_meta)
+            if "period" in loaded.columns and "revenue" in loaded.columns and profit_col_check:
                 company_source=loaded
             else:
-                st.error("会社全体CSVには period / revenue / operating_profit 列が必要です。")
+                st.error("会社全体CSVには period / revenue と、1列以上の利益列が必要です。")
         except Exception as e:
             st.error(str(e))
 
@@ -1197,21 +1222,25 @@ with t1:
     av=max(len(ed.dropna(subset=["period"])),1)
     n=period_count_input("表示する期間数",av,ptype,"ncompany",mx_allowed)
 
+    profit_column, profit_label = resolve_profit_metric(ed, company_meta)
+    if profit_column is None:
+        profit_column = str(company_meta.get(META_PROFIT_COLUMN) or "operating_profit")
+        profit_label = str(company_meta.get(META_PROFIT_LABEL) or "営業利益")
     default_rc=normalize_color(company_meta.get(META_REVENUE_COLOR),THEME["revenue"])
     default_oc=normalize_color(company_meta.get(META_OPERATING_PROFIT_COLOR),THEME["profit"])
     default_mc=normalize_color(company_meta.get(META_MARGIN_COLOR),THEME["margin"])
 
     c1,c2,c3=st.columns(3)
     with c1: rc=st.color_picker("売上高カラー",default_rc,key="company_revenue_color")
-    with c2: oc=st.color_picker("営業利益カラー",default_oc,key="company_profit_color")
-    with c3: mc=st.color_picker("営業利益率カラー",default_mc,key="company_margin_color")
+    with c2: oc=st.color_picker(f"{profit_label}カラー",default_oc,key="company_profit_color")
+    with c3: mc=st.color_picker(f"{profit_label}率カラー",default_mc,key="company_margin_color")
 
     # CSVにカラー指定がある場合はCSVを最優先
     effective_rc=normalize_color(company_meta.get(META_REVENUE_COLOR),rc)
     effective_oc=normalize_color(company_meta.get(META_OPERATING_PROFIT_COLOR),oc)
     effective_mc=normalize_color(company_meta.get(META_MARGIN_COLOR),mc)
 
-    sm=st.checkbox("営業利益率を表示",True)
+    sm=st.checkbox(f"{profit_label}率を表示",True)
     sl=st.checkbox("最新期ラベルを表示",True)
     # v76: UIの「四半期 / 年度」と会社全体サブタイトルを同期。
     # モード切替時は上で session_state を更新するため、古い入力値が残らない。
@@ -1219,7 +1248,7 @@ with t1:
     company_subtitle=st.text_input("サブタイトル",default_company_subtitle,key="company_subtitle")
 
     company_download=company_csv_for_download(
-        ed,csv_currency,csv_unit,effective_rc,effective_oc,effective_mc,company_subtitle
+        ed,csv_currency,csv_unit,effective_rc,effective_oc,effective_mc,company_subtitle,profit_column,profit_label
     )
 
     cdl1,cdl2=st.columns(2)
@@ -1236,7 +1265,7 @@ with t1:
         fig,png=company_chart(
             ed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(n),
             effective_rc,effective_oc,effective_mc,
-            aspect,cw,ch,sm,sl,dpi,note,company_subtitle
+            aspect,cw,ch,sm,sl,dpi,note,company_subtitle,profit_column,profit_label
         )
         st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),"financials.png","image/png")
