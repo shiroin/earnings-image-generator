@@ -476,6 +476,33 @@ def choose_periods(periods,n):
     p=list(dict.fromkeys([str(x) for x in periods if pd.notna(x) and str(x).strip()]))
     return p[-n:] if len(p)>n else p
 
+
+
+def period_count_input(label, available, ptype, key, max_allowed=30):
+    """Default to 20 quarters / 15 years, capped by available data.
+
+    Streamlit keeps number_input values in session_state even when the loaded
+    company or period type changes.  Track the current period type and
+    available row count so stale values (e.g. 1) are reset automatically.
+    """
+    available = max(int(available), 1)
+    upper = max(1, min(int(max_allowed), available))
+    target = min(20 if ptype == "四半期" else 15, upper)
+    marker_key = f"_{key}_period_context"
+    marker = (ptype, upper)
+    if st.session_state.get(marker_key) != marker:
+        st.session_state[key] = target
+        st.session_state[marker_key] = marker
+    else:
+        current = st.session_state.get(key, target)
+        try:
+            current = int(current)
+        except (TypeError, ValueError):
+            current = target
+        if current < 1 or current > upper:
+            st.session_state[key] = target
+    return st.number_input(label, min_value=1, max_value=upper, value=target, step=1, key=key)
+
 def period_labels(periods,ptype):
     latest_idx = len(periods) - 1
     if ptype=="四半期":
@@ -1094,7 +1121,7 @@ with t1:
     ed=st.data_editor(company_source,use_container_width=True,num_rows="dynamic",key="company_editor")
     ed=normalize_numeric_columns(ed)
     av=max(len(ed.dropna(subset=["period"])),1)
-    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av))
+    n=period_count_input("表示する期間数",av,ptype,"ncompany",mx_allowed)
 
     default_rc=normalize_color(company_meta.get(META_REVENUE_COLOR),THEME["revenue"])
     default_oc=normalize_color(company_meta.get(META_OPERATING_PROFIT_COLOR),THEME["profit"])
@@ -1200,7 +1227,7 @@ def seg_tab(kind, dataset=1):
         )
 
     av=max(len(ed.dropna(subset=["period"])),1)
-    n=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="n"+key)
+    n=period_count_input("表示する期間数",av,ptype,"n"+key,mx_allowed)
     style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key="s"+key)
     lab=st.checkbox("最新期のデータラベル・前年比を表示",True,key="l"+key)
     default_seg_subtitle=seg_meta.get(META_SUBTITLE) or ("セグメント別 売上高の推移" if kind=="売上高" else "セグメント別 営業利益の推移")
@@ -1267,7 +1294,7 @@ with t4:
     oed=st.data_editor(orders_source,use_container_width=True,num_rows="dynamic",key="orders_editor")
     oed=normalize_numeric_columns(oed)
     av=max(len(oed.dropna(subset=["period"])),1)
-    on=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="norders")
+    on=period_count_input("表示する期間数",av,ptype,"norders",mx_allowed)
 
     default_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),THEME["revenue"])
     default_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),THEME["profit"])
@@ -1350,7 +1377,7 @@ with t5:
         )
 
     av=max(len(aed.dropna(subset=["period"])),1)
-    an=st.number_input("表示する期間数",1,min(mx_allowed,av),min(20,mx_allowed,av),key="narr")
+    an=period_count_input("表示する期間数",av,ptype,"narr",mx_allowed)
     arr_labels=st.checkbox("プロダクト別の最新ARR・前年比を表示",True,key="arr_latest")
     arr_total=st.checkbox("全社ARR・YoYを最新の積み上げ棒の上に表示",True,key="arr_total")
     default_arr_subtitle=arr_meta.get(META_SUBTITLE) or "ARRの推移"
