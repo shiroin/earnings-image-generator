@@ -351,6 +351,12 @@ def master_meta(settings, section):
         if section in ("segment_revenue", "segment_revenue2", "segment_profit"):
             common_prefix = "segment2_color:" if section == "segment_revenue2" else "segment_color:"
             legacy_prefix = "segment_revenue_color:" if section == "segment_revenue" else ("segment2_color:" if section == "segment_revenue2" else "segment_profit_color:")
+            # v87: セグメント2は既存の「事業」カラーもフォールバックとして利用。
+            # segment2_color があれば最後に上書きし、専用設定を優先する。
+            if section == "segment_revenue2":
+                for k,v in settings.items():
+                    if k.startswith("segment_color:") and k[len("segment_color:"):]:
+                        meta[f"{META_SEGMENT_PREFIX}{k[len('segment_color:'):]}"] = v
             for k,v in settings.items():
                 if k.startswith(legacy_prefix) and k[len(legacy_prefix):]:
                     meta[f"{META_SEGMENT_PREFIX}{k[len(legacy_prefix):]}"] = v
@@ -382,13 +388,23 @@ def master_display_names(settings, section):
         return {}
     prefix = "arr_display:" if section == "arr" else ("segment2_display:" if section == "segment_revenue2" else "segment_display:")
     result = {}
-    for k, v in settings.items():
-        if not k.startswith(prefix):
-            continue
-        item = k[len(prefix):]
-        display = str(v).strip() if v is not None else ""
-        if item and display:
-            result[_name_key(item)] = display
+
+    # v87: セグメント2は、専用の「セグメント2/事業2」設定を最優先しつつ、
+    # 既存マスターで「事業」として登録された表示名も列名が一致すれば利用する。
+    # Salesforceのように第1/第2セグメントが同じ設定表に「事業」で混在していても、
+    # 実データ列名との完全一致で適用されるため誤変換しない。
+    prefixes = [prefix]
+    if section == "segment_revenue2":
+        prefixes = ["segment_display:", "segment2_display:"]  # 後勝ちで専用設定を優先
+
+    for pfx in prefixes:
+        for k, v in settings.items():
+            if not k.startswith(pfx):
+                continue
+            item = k[len(pfx):]
+            display = str(v).strip() if v is not None else ""
+            if item and display:
+                result[_name_key(item)] = display
     return result
 
 def display_name_for(display_names, raw_name):
