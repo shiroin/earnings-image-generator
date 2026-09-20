@@ -12,7 +12,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v92", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v93", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -165,8 +165,10 @@ MASTER_SHEETS = {
     "orders_by_item_annual": "品目別受注高_年度",
     "backlog_by_item_quarterly": "品目別受注残高_四半期",
     "backlog_by_item_annual": "品目別受注残高_年度",
-    "arr_quarterly": "ARR_四半期",
-    "arr_annual": "ARR_年度",
+    "arr_quarterly": "ARR_四半期",  # 後方互換: 製品別ARR
+    "arr_annual": "ARR_年度",      # 後方互換（v93 UIでは未使用）
+    "arr_total_quarterly": "全社ARR_四半期",
+    "arr_product_quarterly": "製品別ARR_四半期",
 }
 
 def master_period_key(section, ptype):
@@ -339,7 +341,8 @@ def master_meta(settings, section):
         "company":"company_subtitle", "segment_revenue":"segment_revenue_subtitle",
         "segment_revenue2":"segment_revenue2_subtitle", "segment_profit":"segment_profit_subtitle",
         "orders":"orders_subtitle", "orders_by_item":"orders_by_item_subtitle",
-        "backlog_by_item":"backlog_by_item_subtitle", "arr":"arr_subtitle"
+        "backlog_by_item":"backlog_by_item_subtitle", "arr":"arr_subtitle",
+        "arr_total":"arr_total_subtitle", "arr_product":"arr_product_subtitle"
     }[section]
     if settings.get(subtitle_key):
         subtitle = str(settings[subtitle_key]).strip()
@@ -403,7 +406,7 @@ def master_display_names(settings, section):
     """
     if not settings:
         return {}
-    if section == "arr":
+    if section in ("arr", "arr_product"):
         prefix = "arr_display:"
     elif section == "segment_revenue2":
         prefix = "segment2_display:"
@@ -777,8 +780,34 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     buf.seek(0)
     return fig,buf
 
+def resolve_order_metrics(df):
+    """受注系シートの可変列を2系列へ解決する。
+
+    標準の orders/backlog だけでなく、cRPO/RPO、受注高/受注残高などを
+    列名のまま表示できる。cRPO/RPO が同居する場合は cRPO→左、RPO→右。
+    """
+    value_cols=[c for c in df.columns if str(c) != "period"]
+    if not value_cols:
+        return None,None,None,None
+    norm={_name_key(c):c for c in value_cols}
+    def pick(keys):
+        for k in keys:
+            nk=_name_key(k)
+            if nk in norm:
+                return norm[nk]
+        return None
+    left=pick(["orders","order","受注高","cRPO","current RPO","current remaining performance obligations"])
+    right=pick(["backlog","受注残高","RPO","remaining performance obligations"])
+    if left is None:
+        left=next((c for c in value_cols if c != right), None)
+    if right is None:
+        right=next((c for c in value_cols if c != left), None)
+    left_label=("受注高" if left is not None and _name_key(left) in {_name_key("orders"),_name_key("order")} else str(left)) if left is not None else None
+    right_label=("受注残高" if right is not None and _name_key(right)==_name_key("backlog") else str(right)) if right is not None else None
+    return left,right,left_label,right_label
+
 def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
-                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note,subtitle,backlog_label="受注残高"):
+                 orders_color,backlog_color,aspect,cw,ch,show_latest,dpi,note,subtitle,backlog_label="受注残高",orders_label="受注高"):
     df=df.dropna(subset=["period"]).copy()
     df["period"]=df["period"].astype(str)
     keep=choose_periods(df["period"],n)
@@ -804,13 +833,13 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     handles=[]; labels=[]
     if has_orders and has_backlog:
         bw=.36
-        b1=ax.bar(x-bw/2,orders,bw,color=orders_color,label="受注高",zorder=3)
+        b1=ax.bar(x-bw/2,orders,bw,color=orders_color,label=orders_label,zorder=3)
         b2=ax.bar(x+bw/2,backlog,bw,color=backlog_color,label=backlog_label,zorder=3)
-        handles.extend([b1,b2]); labels.extend(["受注高",backlog_label])
+        handles.extend([b1,b2]); labels.extend([orders_label,backlog_label])
     elif has_orders:
         bw=.48
-        b1=ax.bar(x,orders,bw,color=orders_color,label="受注高",zorder=3)
-        handles.append(b1); labels.append("受注高")
+        b1=ax.bar(x,orders,bw,color=orders_color,label=orders_label,zorder=3)
+        handles.append(b1); labels.append(orders_label)
     elif has_backlog:
         bw=.48
         b2=ax.bar(x,backlog,bw,color=backlog_color,label=backlog_label,zorder=3)
@@ -849,12 +878,12 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
 
         # 2系列なら2枚、1系列だけなら中央に1枚だけ表示。
         if has_orders and has_backlog:
-            add_kpi_card(fig,.17,.69,.27,.14,"受注高",f"{fmt(orders.iloc[-1])} {unit}",
+            add_kpi_card(fig,.17,.69,.27,.14,orders_label,f"{fmt(orders.iloc[-1])} {unit}",
                          f"前年比 {og:+.1f}%" if og is not None else "",orders_color,"#F1F6FF")
             add_kpi_card(fig,.56,.69,.27,.14,backlog_label,f"{fmt(backlog.iloc[-1])} {unit}",
                          f"前年比 {bg:+.1f}%" if bg is not None else "",backlog_color,"#F0FAF8")
         elif has_orders:
-            add_kpi_card(fig,.365,.69,.27,.14,"受注高",f"{fmt(orders.iloc[-1])} {unit}",
+            add_kpi_card(fig,.365,.69,.27,.14,orders_label,f"{fmt(orders.iloc[-1])} {unit}",
                          f"前年比 {og:+.1f}%" if og is not None else "",orders_color,"#F1F6FF")
         elif has_backlog:
             add_kpi_card(fig,.365,.69,.27,.14,backlog_label,f"{fmt(backlog.iloc[-1])} {unit}",
@@ -1183,7 +1212,7 @@ else:
     periods=[f"FY{y}" for y in range(1997,2027)]
     mx_allowed=30
 
-t1,t2,t2b,t3,t4,t4o,t4b,t5=st.tabs(["会社全体","セグメント売上高","セグメント売上高2","セグメント利益","受注・受注残高","品目別 受注高","品目別 受注残高","ARR"])
+t1,t2,t2b,t3,t4,t4o,t4b,t5a,t5b=st.tabs(["会社全体","セグメント売上高","セグメント売上高2","セグメント利益","受注・受注残高","品目別 受注高","品目別 受注残高","全社ARR","製品別ARR"])
 
 with t1:
     # v81: 起動時はサンプル数値を表示しない。マスター/CSV未読込なら空表から開始。
@@ -1383,10 +1412,10 @@ with t4:
         try:
             loaded,orders_meta=read_uploaded_csv(uploaded_orders)
             cols=set(loaded.columns)
-            if "period" in cols and ({"orders", "backlog"} & cols):
+            if "period" in cols and len([c for c in loaded.columns if c != "period"]) >= 1:
                 orders_source=loaded
             else:
-                st.error("CSVには period と、orders / backlog の少なくとも一方が必要です。")
+                st.error("CSVには period と、1列以上の受注系データ列が必要です。")
         except Exception as e:
             st.error(str(e))
 
@@ -1396,6 +1425,10 @@ with t4:
 
     oed=st.data_editor(orders_source,use_container_width=True,num_rows="dynamic",key="orders_editor")
     oed=normalize_numeric_columns(oed)
+    left_col,right_col,detected_orders_label,detected_backlog_label=resolve_order_metrics(oed)
+    chart_oed=pd.DataFrame({"period":oed["period"]}) if "period" in oed.columns else pd.DataFrame(columns=["period"])
+    if left_col is not None: chart_oed["orders"]=oed[left_col]
+    if right_col is not None: chart_oed["backlog"]=oed[right_col]
     av=max(len(oed.dropna(subset=["period"])),1)
     on=period_count_input("表示する期間数",av,ptype,"norders",mx_allowed)
 
@@ -1408,12 +1441,13 @@ with t4:
         backlog_color=st.color_picker("受注残高カラー",default_backlog_color,key="backlog_color")
     effective_orders_color=normalize_color(orders_meta.get(META_ORDERS_COLOR),orders_color)
     effective_backlog_color=normalize_color(orders_meta.get(META_BACKLOG_COLOR),backlog_color)
-    default_backlog_label=str(orders_meta.get(META_BACKLOG_LABEL) or "受注残高").strip()
+    default_backlog_label=str(orders_meta.get(META_BACKLOG_LABEL) or detected_backlog_label or "受注残高").strip()
     backlog_label=st.text_input("受注残高の表示名",default_backlog_label,key="backlog_label",
                                 help="例：受注残高 / RPO / 受注残高（RPO）")
     backlog_label=str(backlog_label or "受注残高").strip()
     show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
-    default_orders_subtitle=orders_meta.get(META_SUBTITLE) or "受注高・受注残高の推移"
+    orders_label=str(detected_orders_label or "受注高").strip()
+    default_orders_subtitle=orders_meta.get(META_SUBTITLE) or f"{orders_label}・{backlog_label}の推移"
     orders_subtitle=st.text_input("サブタイトル",default_orders_subtitle,key="orders_subtitle")
 
     orders_download=orders_csv_for_download(
@@ -1430,9 +1464,9 @@ with t4:
 
     if generate_orders:
         fig,png=orders_chart(
-            oed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(on),
+            chart_oed,company,csv_currency,csv_mode,csv_unit,fx,ptype,int(on),
             effective_orders_color,effective_backlog_color,
-            aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle,backlog_label
+            aspect,cw,ch,show_orders_latest,dpi,note,orders_subtitle,backlog_label,orders_label
         )
         st.image(png.getvalue(), width="stretch")
         st.download_button("PNGをダウンロード",png.getvalue(),
@@ -1513,80 +1547,65 @@ with t4b:
     item_orders_tab("backlog_by_item","品目別 受注残高","backlog_item","backlog_by_item")
 
 
-with t5:
-    # ARRは複数プロダクトを積み上げ表示。CSVは period + 各プロダクト列。
-    # v81: 起動時はダミーのARRデータを表示しない。
-    sample_arr=pd.DataFrame(columns=["period"])
-    uploaded_arr=st.file_uploader(
-        "ARR CSVを読み込む（period + 各プロダクト列）",
-        type=["csv"],key="arr_csv_upload"
-    )
-    arr_meta=master_meta(master_settings,"arr") if master_settings else {}
-    arr_master_key=master_period_key("arr",ptype)
-    arr_source=master_sheets.get(arr_master_key,sample_arr)
-    if uploaded_arr is not None and arr_master_key not in master_sheets:
+# v93: ARRは四半期のみ。全社ARRと製品別ARRを別タブで管理する。
+def arr_source_quarterly(kind):
+    if kind == "total":
+        return master_sheets.get("arr_total_quarterly", pd.DataFrame(columns=["period","ARR"]))
+    return master_sheets.get("arr_product_quarterly", master_sheets.get("arr_quarterly", pd.DataFrame(columns=["period"])))
+
+with t5a:
+    arr_meta=master_meta(master_settings,"arr_total") if master_settings else {}
+    source=arr_source_quarterly("total")
+    uploaded=st.file_uploader("全社ARR CSVを読み込む（period + ARR列）",type=["csv"],key="arr_total_csv_upload")
+    if uploaded is not None and "arr_total_quarterly" not in master_sheets:
         try:
-            loaded,arr_meta=read_uploaded_csv(uploaded_arr)
-            if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1:
-                arr_source=loaded
-            else:
-                st.error("ARR CSVには period 列と、1列以上のプロダクト列が必要です。")
-        except Exception as e:
-            st.error(str(e))
-
+            loaded,arr_meta=read_uploaded_csv(uploaded)
+            if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1: source=loaded
+            else: st.error("全社ARR CSVには period 列とARR列が必要です。")
+        except Exception as e: st.error(str(e))
     csv_currency,csv_mode,csv_unit=resolve_csv_display(arr_meta,currency,mode,unit)
-    if arr_meta:
-        st.caption(f"ファイル設定を優先：入力通貨 {csv_currency} / 表示単位 {csv_unit}")
-
-    aed=st.data_editor(arr_source,use_container_width=True,num_rows="dynamic",key="arr_editor")
-    aed=normalize_numeric_columns(aed)
-    products=[c for c in aed.columns if c!="period"]
-    arr_display_names=master_display_names(master_settings, "arr")
-
-    st.markdown("**プロダクトカラー**")
-    arr_color_cols=st.columns(min(3,max(len(products),1)))
-    arr_colors={}
-    for i,product in enumerate(products):
-        csv_color=normalize_color(
-            arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),
-            THEME["segment_palette"][i%len(THEME["segment_palette"])]
-        )
-        with arr_color_cols[i%len(arr_color_cols)]:
-            picked=st.color_picker(display_name_for(arr_display_names,product),csv_color,key=f"arr_color_{product}")
-        arr_colors[product]=normalize_color(
-            arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),picked
-        )
-
+    aed=normalize_numeric_columns(st.data_editor(source,use_container_width=True,num_rows="dynamic",key="arr_total_editor"))
+    value_cols=[c for c in aed.columns if c!="period"]
+    arr_col=value_cols[0] if value_cols else None
     av=max(len(aed.dropna(subset=["period"])),1)
-    an=period_count_input("表示する期間数",av,ptype,"narr",mx_allowed)
-    arr_labels=st.checkbox("プロダクト別の最新ARR・前年比を表示",True,key="arr_latest")
-    arr_total=st.checkbox("全社ARR・YoYを最新の積み上げ棒の上に表示",True,key="arr_total")
-    default_arr_subtitle=arr_meta.get(META_SUBTITLE) or "ARRの推移"
-    arr_subtitle=st.text_input("サブタイトル",default_arr_subtitle,key="arr_subtitle")
+    an=period_count_input("表示する期間数",av,"四半期","narr_total",30)
+    arr_subtitle=st.text_input("サブタイトル",arr_meta.get(META_SUBTITLE) or "全社ARRの推移",key="arr_total_subtitle")
+    arr_color=st.color_picker("ARRカラー",THEME["revenue"],key="arr_total_color")
+    generate=st.button("全社ARRグラフを生成",type="primary",use_container_width=True,key="generate_arr_total")
+    if generate and arr_col:
+        plot_df=aed[["period",arr_col]].rename(columns={arr_col:"ARR"})
+        fig,png=segment_chart(plot_df,company,csv_currency,csv_mode,csv_unit,fx,int(an),"積み上げ","ARR","四半期",aspect,cw,ch,True,dpi,note,{"ARR":arr_color},arr_subtitle,show_total=False,display_names={_name_key("ARR"):"ARR"})
+        st.image(png.getvalue(),width="stretch")
+        st.download_button("PNGをダウンロード",png.getvalue(),"arr_total.png","image/png",key="download_arr_total")
 
-    arr_download=segment_csv_for_download(
-        aed,csv_currency,csv_unit,arr_colors,arr_subtitle
-    )
-    ac1,ac2=st.columns(2)
-    with ac1:
-        st.download_button(
-            "ARR CSVをダウンロード",
-            arr_download.to_csv(index=False).encode("utf-8-sig"),
-            "arr.csv","text/csv",key="arr_csv_download",use_container_width=True
-        )
-    with ac2:
-        generate_arr=st.button(
-            "ARRグラフを生成",type="primary",use_container_width=True,key="generate_arr"
-        )
-
-    if generate_arr:
-        fig,png=segment_chart(
-            aed,company,csv_currency,csv_mode,csv_unit,fx,int(an),"積み上げ","プロダクト別 ARR",
-            ptype,aspect,cw,ch,arr_labels,dpi,note,arr_colors,arr_subtitle,
-            show_total=arr_total,total_name="全社ARR",display_names=arr_display_names
-        )
-        st.image(png.getvalue(), width="stretch")
-        st.download_button(
-            "PNGをダウンロード",png.getvalue(),"arr.png",
-            "image/png",key="download_arr"
-        )
+with t5b:
+    arr_meta=master_meta(master_settings,"arr_product") if master_settings else {}
+    source=arr_source_quarterly("product")
+    uploaded=st.file_uploader("製品別ARR CSVを読み込む（period + 各製品列）",type=["csv"],key="arr_product_csv_upload")
+    if uploaded is not None and "arr_product_quarterly" not in master_sheets and "arr_quarterly" not in master_sheets:
+        try:
+            loaded,arr_meta=read_uploaded_csv(uploaded)
+            if "period" in loaded.columns and len([c for c in loaded.columns if c!="period"])>=1: source=loaded
+            else: st.error("製品別ARR CSVには period 列と、1列以上の製品列が必要です。")
+        except Exception as e: st.error(str(e))
+    csv_currency,csv_mode,csv_unit=resolve_csv_display(arr_meta,currency,mode,unit)
+    aed=normalize_numeric_columns(st.data_editor(source,use_container_width=True,num_rows="dynamic",key="arr_product_editor"))
+    products=[c for c in aed.columns if c!="period"]
+    arr_display_names=master_display_names(master_settings,"arr_product")
+    arr_colors={}
+    if products:
+        st.markdown("**プロダクトカラー**")
+        color_cols=st.columns(min(3,len(products)))
+        for i,product in enumerate(products):
+            configured=normalize_color(arr_meta.get(f"{META_SEGMENT_PREFIX}{product}"),THEME["segment_palette"][i%len(THEME["segment_palette"])])
+            with color_cols[i%len(color_cols)]:
+                arr_colors[product]=st.color_picker(display_name_for(arr_display_names,product),configured,key=f"arr_product_color_{product}")
+    av=max(len(aed.dropna(subset=["period"])),1)
+    an=period_count_input("表示する期間数",av,"四半期","narr_product",30)
+    arr_labels=st.checkbox("製品別の最新ARR・前年比を表示",True,key="arr_product_latest")
+    arr_subtitle=st.text_input("サブタイトル",arr_meta.get(META_SUBTITLE) or "製品別ARRの推移",key="arr_product_subtitle")
+    generate=st.button("製品別ARRグラフを生成",type="primary",use_container_width=True,key="generate_arr_product")
+    if generate:
+        fig,png=segment_chart(aed,company,csv_currency,csv_mode,csv_unit,fx,int(an),"積み上げ","製品別 ARR","四半期",aspect,cw,ch,arr_labels,dpi,note,arr_colors,arr_subtitle,show_total=False,display_names=arr_display_names)
+        st.image(png.getvalue(),width="stretch")
+        st.download_button("PNGをダウンロード",png.getvalue(),"arr_product.png","image/png",key="download_arr_product")
