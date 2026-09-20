@@ -68,6 +68,7 @@ META_MARGIN_COLOR="__margin_color"  # optional / backward-compatible extension
 META_PROFIT_COLUMN="__profit_column"
 META_PROFIT_LABEL="__profit_label"
 META_ORDERS_COLOR="__orders_color"
+META_ORDERS_LABEL="__orders_label"
 META_BACKLOG_COLOR="__backlog_color"
 META_BACKLOG_LABEL="__backlog_label"
 META_SUBTITLE="__subtitle"
@@ -358,7 +359,7 @@ def master_meta(settings, section):
         for mk,sk in [(META_REVENUE_COLOR,"revenue_color"),(META_OPERATING_PROFIT_COLOR,"operating_profit_color"),(META_MARGIN_COLOR,"margin_color"),(META_PROFIT_COLUMN,"profit_column"),(META_PROFIT_LABEL,"profit_label")]:
             if settings.get(sk): meta[mk]=settings[sk]
     elif section=="orders":
-        for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_BACKLOG_COLOR,"backlog_color"),(META_BACKLOG_LABEL,"backlog_label")]:
+        for mk,sk in [(META_ORDERS_COLOR,"orders_color"),(META_ORDERS_LABEL,"orders_label"),(META_BACKLOG_COLOR,"backlog_color"),(META_BACKLOG_LABEL,"backlog_label")]:
             if settings.get(sk): meta[mk]=settings[sk]
     else:
         # v59: セグメント売上高・利益は共通の segment_color:<名称> を優先。
@@ -486,11 +487,12 @@ def company_csv_for_download(df, currency, unit, revenue_color, operating_profit
         meta[META_SUBTITLE] = str(subtitle)
     return add_metadata_columns(df, meta)
 
-def orders_csv_for_download(df, currency, unit, orders_color, backlog_color, subtitle=None, backlog_label="受注残高"):
+def orders_csv_for_download(df, currency, unit, orders_color, backlog_color, subtitle=None, backlog_label="受注残高", orders_label="受注高"):
     meta = {
         META_INPUT_CURRENCY: currency,
         META_DISPLAY_UNIT: unit,
         META_ORDERS_COLOR: normalize_color(orders_color, THEME["revenue"]),
+        META_ORDERS_LABEL: str(orders_label or "受注高").strip(),
         META_BACKLOG_COLOR: normalize_color(backlog_color, THEME["profit"]),
         META_BACKLOG_LABEL: str(backlog_label or "受注残高").strip(),
     }
@@ -1445,13 +1447,16 @@ with t4:
     backlog_label=st.text_input("受注残高の表示名",default_backlog_label,key="backlog_label",
                                 help="例：受注残高 / RPO / 受注残高（RPO）")
     backlog_label=str(backlog_label or "受注残高").strip()
+    default_orders_label=str(orders_meta.get(META_ORDERS_LABEL) or detected_orders_label or "受注高").strip()
+    orders_label=st.text_input("受注高の表示名",default_orders_label,key="orders_label",
+                               help="例：受注高 / cRPO / order")
+    orders_label=str(orders_label or "受注高").strip()
     show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
-    orders_label=str(detected_orders_label or "受注高").strip()
     default_orders_subtitle=orders_meta.get(META_SUBTITLE) or f"{orders_label}・{backlog_label}の推移"
     orders_subtitle=st.text_input("サブタイトル",default_orders_subtitle,key="orders_subtitle")
 
     orders_download=orders_csv_for_download(
-        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color,orders_subtitle,backlog_label
+        oed,csv_currency,csv_unit,effective_orders_color,effective_backlog_color,orders_subtitle,backlog_label,orders_label
     )
     od1,od2=st.columns(2)
     with od1:
