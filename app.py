@@ -126,7 +126,7 @@ def normalize_numeric_columns(df):
     guidance_keys={unicodedata.normalize("NFKC",x).replace(" ","").replace("　","").casefold() for x in guidance_names}
     for c in out.columns:
         ck=unicodedata.normalize("NFKC",str(c)).replace(" ","").replace("　","").casefold()
-        if str(c) != "period" and ck not in guidance_keys:
+        if str(c) != "period" and ck not in guidance_keys and not ck.endswith("guidance") and not ck.endswith("予想"):
             out[c]=coerce_numeric_series(out[c])
     return out
 
@@ -613,6 +613,22 @@ def latest_is_guidance(df):
     c=_guidance_col(df)
     return bool(c is not None and len(df) and _truthy_guidance(df.iloc[-1][c]))
 
+def latest_series_is_guidance(df, metric, aliases=None):
+    """Return latest guidance flag for one metric.
+    Priority: <metric>_guidance / aliases -> legacy generic guidance.
+    This keeps v96 files backward compatible while allowing per-series guidance.
+    """
+    if not len(df): return False
+    names=[f"{metric}_guidance"]
+    for a in (aliases or []):
+        names.extend([f"{a}_guidance", f"{a}予想"])
+    norm={_name_key(c):c for c in df.columns}
+    for name in names:
+        c=norm.get(_name_key(name))
+        if c is not None:
+            return _truthy_guidance(df.iloc[-1][c])
+    return latest_is_guidance(df)
+
 def note_text(fig, note, currency, mode, fx, y=0.025, guidance=False):
     parts=[]
     if note and str(note).strip():
@@ -703,7 +719,9 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     df=df[df["period"].isin(keep)].copy()
     df["period"]=pd.Categorical(df["period"],categories=keep,ordered=True)
     df=df.sort_values("period").reset_index(drop=True)
-    guidance_latest=latest_is_guidance(df)
+    revenue_guidance_latest=latest_series_is_guidance(df,"revenue",["売上高","sales"])
+    profit_guidance_latest=latest_series_is_guidance(df,profit_column,["profit","利益",profit_label])
+    guidance_latest=bool(revenue_guidance_latest or profit_guidance_latest)
 
     rr=pd.to_numeric(df["revenue"],errors="coerce")
     oo=pd.to_numeric(df[profit_column],errors="coerce")
@@ -727,11 +745,11 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     handles=[]; labels=[]
     if has_revenue:
         b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
-        if guidance_latest and len(b1): b1[-1].set_alpha(.35)
+        if revenue_guidance_latest and len(b1): b1[-1].set_alpha(.35)
         handles.append(b1); labels.append("売上高（左軸）")
     if has_op:
         b2=ax.bar(x+bw/2,op,bw,color=oc,label=f"{profit_label}（左軸）",zorder=3)
-        if guidance_latest and len(b2): b2[-1].set_alpha(.35)
+        if profit_guidance_latest and len(b2): b2[-1].set_alpha(.35)
         handles.append(b2); labels.append(f"{profit_label}（左軸）")
 
     ax2=None
@@ -817,7 +835,8 @@ def resolve_order_metrics(df):
     標準の orders/backlog だけでなく、cRPO/RPO、受注高/受注残高などを
     列名のまま表示できる。cRPO/RPO が同居する場合は cRPO→左、RPO→右。
     """
-    value_cols=[c for c in df.columns if str(c) != "period" and _name_key(c) not in {_name_key(x) for x in GUIDANCE_COLUMNS}]
+    value_cols=[c for c in df.columns if str(c) != "period" and _name_key(c) not in {_name_key(x) for x in GUIDANCE_COLUMNS}
+                and not _name_key(c).endswith("guidance") and not _name_key(c).endswith("予想")]
     if not value_cols:
         return None,None,None,None
     norm={_name_key(c):c for c in value_cols}
