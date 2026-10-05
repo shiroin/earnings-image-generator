@@ -815,10 +815,13 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         margin_value=f"{margin[-1]:.1f}%" if np.isfinite(margin[-1]) else "—"
         rev_value=f"{fmt(rev.iloc[-1])} {unit}" if np.isfinite(rev.iloc[-1]) else "—"
         op_value=f"{fmt(op.iloc[-1])} {unit}" if np.isfinite(op.iloc[-1]) else "—"
+        revenue_kpi_label = "売上高(予想)" if revenue_guidance_latest else "売上高"
+        profit_kpi_label = f"{profit_label}(予想)" if profit_guidance_latest else profit_label
+        margin_kpi_label = f"{profit_label}率(予想)" if guidance_latest else f"{profit_label}率"
         specs=[
-            ("売上高",rev_value,f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
-            (profit_label,op_value,f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
-            (f"{profit_label}率",margin_value,f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
+            (revenue_kpi_label,rev_value,f"前年比 {rg:+.1f}%" if rg is not None else "",rc,THEME["revenue_bg"]),
+            (profit_kpi_label,op_value,f"前年比 {og:+.1f}%" if og is not None else "",oc,THEME["profit_bg"]),
+            (margin_kpi_label,margin_value,f"前年差 {md:+.1f}pt" if md is not None else "",mc,THEME["margin_bg"])
         ]
         xs=[.055,.365,.675]
         for x0,s in zip(xs,specs):
