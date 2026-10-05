@@ -122,8 +122,11 @@ def coerce_numeric_series(series):
 def normalize_numeric_columns(df):
     """period以外のデータ列を、CSVの表示形式に依存せず数値化する。"""
     out=df.copy()
+    guidance_names={"guidance","is_guidance","company_guidance","会社側ガイダンス","会社予想","予想"}
+    guidance_keys={unicodedata.normalize("NFKC",x).replace(" ","").replace("　","").casefold() for x in guidance_names}
     for c in out.columns:
-        if str(c) != "period":
+        ck=unicodedata.normalize("NFKC",str(c)).replace(" ","").replace("　","").casefold()
+        if str(c) != "period" and ck not in guidance_keys:
             out[c]=coerce_numeric_series(out[c])
     return out
 
@@ -592,10 +595,30 @@ def style_axis(ax, labelsize=17):
     ax.spines["bottom"].set_color(THEME["axis"])
     ax.tick_params(axis="both",colors=THEME["text"],labelsize=labelsize,length=0)
 
-def note_text(fig, note, currency, mode, fx, y=0.025):
+GUIDANCE_COLUMNS = {"guidance","is_guidance","company_guidance","会社側ガイダンス","会社予想","予想"}
+
+def _guidance_col(df):
+    norm={_name_key(c):c for c in df.columns}
+    for name in GUIDANCE_COLUMNS:
+        if _name_key(name) in norm:
+            return norm[_name_key(name)]
+    return None
+
+def _truthy_guidance(v):
+    if pd.isna(v): return False
+    t=unicodedata.normalize("NFKC",str(v)).strip().casefold()
+    return t in {"1","true","yes","y","guidance","company guidance","会社側ガイダンス","会社予想","予想","ガイダンス"}
+
+def latest_is_guidance(df):
+    c=_guidance_col(df)
+    return bool(c is not None and len(df) and _truthy_guidance(df.iloc[-1][c]))
+
+def note_text(fig, note, currency, mode, fx, y=0.025, guidance=False):
     parts=[]
     if note and str(note).strip():
         parts.append(str(note).strip())
+    if guidance:
+        parts.append("※最新決算は会社側ガイダンス")
     if mode=="円換算" and currency!="JPY":
         parts.append(f"換算レート：1 {currency} = {fx[currency]:g} 円")
     if parts:
@@ -657,7 +680,7 @@ def resolve_profit_metric(df, meta=None):
     candidates += [c for c in PROFIT_COLUMN_LABELS if c not in candidates]
     profit_col = next((c for c in candidates if c in df.columns), None)
     if profit_col is None:
-        others=[c for c in df.columns if c not in {"period","revenue"} and not str(c).startswith(META_PREFIX)]
+        others=[c for c in df.columns if c not in {"period","revenue"} and _name_key(c) not in {_name_key(x) for x in GUIDANCE_COLUMNS} and not str(c).startswith(META_PREFIX)]
         profit_col=others[0] if len(others)==1 else None
     if profit_col is None:
         return None, str(meta.get(META_PROFIT_LABEL) or "利益").strip()
@@ -680,6 +703,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     df=df[df["period"].isin(keep)].copy()
     df["period"]=pd.Categorical(df["period"],categories=keep,ordered=True)
     df=df.sort_values("period").reset_index(drop=True)
+    guidance_latest=latest_is_guidance(df)
 
     rr=pd.to_numeric(df["revenue"],errors="coerce")
     oo=pd.to_numeric(df[profit_column],errors="coerce")
@@ -703,9 +727,11 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     handles=[]; labels=[]
     if has_revenue:
         b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
+        if guidance_latest and len(b1): b1[-1].set_alpha(.35)
         handles.append(b1); labels.append("売上高（左軸）")
     if has_op:
         b2=ax.bar(x+bw/2,op,bw,color=oc,label=f"{profit_label}（左軸）",zorder=3)
+        if guidance_latest and len(b2): b2[-1].set_alpha(.35)
         handles.append(b2); labels.append(f"{profit_label}（左軸）")
 
     ax2=None
@@ -719,6 +745,9 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         ax2.tick_params(axis="y",colors=THEME["text"],labelsize=11,length=0)
         for s in ["top","left"]: ax2.spines[s].set_visible(False)
         ax2.spines["right"].set_color(THEME["axis"])
+        if guidance_latest and len(x) and np.isfinite(margin[-1]):
+            ax2.scatter([x[-1]],[margin[-1]],s=58,color=THEME["bg"],alpha=.60,zorder=7)
+            ax2.scatter([x[-1]],[margin[-1]],s=34,color=mc,alpha=.35,zorder=8)
         handles.append(line); labels.append(f"{profit_label}率（右軸）")
 
     periods=df["period"].astype(str).tolist()
@@ -775,7 +804,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
 
     # Graph band leaves a dedicated note band below it.
     plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
-    note_text(fig,note,currency,mode,fx,y=.022)
+    note_text(fig,note,currency,mode,fx,y=.022,guidance=guidance_latest)
 
     buf=io.BytesIO()
     fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
@@ -788,7 +817,7 @@ def resolve_order_metrics(df):
     標準の orders/backlog だけでなく、cRPO/RPO、受注高/受注残高などを
     列名のまま表示できる。cRPO/RPO が同居する場合は cRPO→左、RPO→右。
     """
-    value_cols=[c for c in df.columns if str(c) != "period"]
+    value_cols=[c for c in df.columns if str(c) != "period" and _name_key(c) not in {_name_key(x) for x in GUIDANCE_COLUMNS}]
     if not value_cols:
         return None,None,None,None
     norm={_name_key(c):c for c in value_cols}
@@ -816,6 +845,7 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     df=df[df["period"].isin(keep)].copy()
     df["period"]=pd.Categorical(df["period"],categories=keep,ordered=True)
     df=df.sort_values("period").reset_index(drop=True)
+    guidance_latest=latest_is_guidance(df)
 
     # v88: 受注高/受注残高の片方しかない会社にも対応。
     # 列自体がない場合も空系列として扱い、全期間NaNの系列は描画/KPI/凡例から除外する。
@@ -848,6 +878,13 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
         handles.append(b2); labels.append(backlog_label)
     else:
         bw=.48
+
+    if guidance_latest:
+        for cont in ax.containers:
+            try:
+                if len(cont): cont[-1].set_alpha(.35)
+            except Exception:
+                pass
 
     periods=df["period"].astype(str).tolist()
     ax.set_xticks(x)
@@ -901,7 +938,7 @@ def orders_chart(df,company,currency,mode,unit,fx,ptype,n,
     ymin,ymax=ax.get_ylim()
     if ymax>0: ax.set_ylim(ymin,ymax*1.14)
     plt.subplots_adjust(left=.08,right=.92,bottom=.16,top=.65)
-    note_text(fig,note,currency,mode,fx,y=.025)
+    note_text(fig,note,currency,mode,fx,y=.025,guidance=guidance_latest)
 
     buf=io.BytesIO()
     fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
@@ -914,11 +951,12 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
 
     display_names = display_names or {}
     raw=df.copy()
-    segs=[c for c in raw.columns if c!="period" and not raw[c].isna().all()]
+    segs=[c for c in raw.columns if c!="period" and _name_key(c) not in {_name_key(x) for x in GUIDANCE_COLUMNS} and not raw[c].isna().all()]
     keep=choose_periods(raw["period"],n)
     raw=raw[raw["period"].astype(str).isin(keep)].copy()
     raw["period"]=pd.Categorical(raw["period"].astype(str),categories=keep,ordered=True)
     raw=raw.sort_values("period").reset_index(drop=True)
+    guidance_latest=latest_is_guidance(raw)
 
     disp=raw.copy()
     for c in segs:
@@ -950,6 +988,13 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
             xpos=x+offsets[i]
             ax.bar(xpos,vals,width=bw*.9,color=colors[i],label=display_name_for(display_names,s),zorder=3)
             if len(disp): latest_positions.append((s,vals[-1],vals[-1],colors[i]))
+
+    if guidance_latest:
+        for cont in ax.containers:
+            try:
+                if len(cont): cont[-1].set_alpha(.35)
+            except Exception:
+                pass
 
     plist=disp["period"].astype(str).tolist()
     ax.set_xticks(x)
@@ -1091,14 +1136,14 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     if ymax>0:
         ax.set_ylim(ymin,ymax*(1.18 if show_total and style=="積み上げ" else 1.08))
 
-    note_text(fig,note,currency,mode,fx,y=.022)
+    note_text(fig,note,currency,mode,fx,y=.022,guidance=guidance_latest)
 
     buf=io.BytesIO()
     fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v92")
+st.title("決算画像ジェネレーター v96")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
@@ -1157,7 +1202,7 @@ st.session_state["_company_subtitle_ptype"] = ptype
 
 with st.sidebar:
     company=st.text_input("企業名",master_settings.get("company_name", ""))
-    note=st.text_input("注意書き",master_settings.get("note","※ 最新期は会社予想"))
+    note=st.text_input("注意書き",master_settings.get("note", ""))
 
     currency_options=["JPY","USD","EUR","CNY","DKK","KRW","NOK","SEK","CHF","TWD","HKD"]
     master_currency=str(master_settings.get("input_currency","JPY")).upper()
@@ -1431,6 +1476,8 @@ with t4:
     chart_oed=pd.DataFrame({"period":oed["period"]}) if "period" in oed.columns else pd.DataFrame(columns=["period"])
     if left_col is not None: chart_oed["orders"]=oed[left_col]
     if right_col is not None: chart_oed["backlog"]=oed[right_col]
+    _ogc=_guidance_col(oed)
+    if _ogc is not None: chart_oed["guidance"]=oed[_ogc]
     av=max(len(oed.dropna(subset=["period"])),1)
     on=period_count_input("表示する期間数",av,ptype,"norders",mx_allowed)
 
