@@ -605,9 +605,26 @@ def _guidance_col(df):
     return None
 
 def _truthy_guidance(v):
-    if pd.isna(v): return False
+    """Interpret spreadsheet guidance flags robustly.
+
+    Excel/Google Sheets often returns a cell containing 1 as float 1.0.
+    v97 compared str(1.0) == "1.0" against only "1", so valid flags were lost.
+    Accept non-zero numeric values as True and common textual flags as well.
+    """
+    if pd.isna(v):
+        return False
+    if isinstance(v, (bool, np.bool_)):
+        return bool(v)
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return bool(float(v) != 0)
     t=unicodedata.normalize("NFKC",str(v)).strip().casefold()
-    return t in {"1","true","yes","y","guidance","company guidance","会社側ガイダンス","会社予想","予想","ガイダンス"}
+    if not t:
+        return False
+    try:
+        return float(t) != 0
+    except (TypeError, ValueError):
+        pass
+    return t in {"true","yes","y","guidance","company guidance","会社側ガイダンス","会社予想","予想","ガイダンス"}
 
 def latest_is_guidance(df):
     c=_guidance_col(df)
