@@ -12,7 +12,7 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-st.set_page_config(page_title="決算画像ジェネレーター v93", layout="wide")
+st.set_page_config(page_title="決算画像ジェネレーター v100", layout="wide")
 
 def set_japanese_font():
     candidates = [
@@ -692,12 +692,38 @@ def add_kpi_card(fig,x,y,w,h,title,value,delta,color,bg):
              color=color,ha="center",va="center",zorder=12)
 
 def add_callout(ax,x,y,text,color,offset):
-    ax.annotate(
+    return ax.annotate(
         text,xy=(x,y),xytext=offset,textcoords="offset points",
         ha="center",va="center",fontsize=14,fontweight="bold",color="white",
         bbox=dict(boxstyle="round,pad=.28",fc=color,ec=color),
         arrowprops=dict(arrowstyle="-",color=color,lw=1.4),zorder=10
     )
+
+def resolve_callout_collisions(fig, callouts, pad_px=5):
+    """Move only colliding data labels. Earlier callouts have higher priority.
+
+    callouts: [(annotation, [(dx,dy), ...]), ...]
+    Candidate offsets are tried in order. Bounding boxes are measured in display
+    pixels, so the same logic works across aspect ratios and twin y-axes.
+    """
+    if not callouts:
+        return
+    renderer=fig.canvas.get_renderer()
+    accepted=[]
+    for ann,candidates in callouts:
+        original=ann.get_position()
+        opts=[original]+[p for p in candidates if p != original]
+        chosen=original
+        for pos in opts:
+            ann.set_position(pos)
+            fig.canvas.draw()
+            box=ann.get_window_extent(renderer=fig.canvas.get_renderer()).expanded(1.04,1.12)
+            if not any(box.overlaps(prev) for prev in accepted):
+                chosen=pos
+                break
+        ann.set_position(chosen)
+        fig.canvas.draw()
+        accepted.append(ann.get_window_extent(renderer=fig.canvas.get_renderer()).expanded(1.04,1.12))
 
 PROFIT_COLUMN_LABELS = {
     "operating_profit":"営業利益", "operating_income":"営業利益",
@@ -826,12 +852,35 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         xs=[.055,.365,.675]
         for x0,s in zip(xs,specs):
             add_kpi_card(fig,x0,.69,.27,.14,*s)
+        # Latest-period callouts. When the latest period contains company guidance,
+        # also label the immediately preceding period so readers can compare
+        # forecast vs the latest actual at a glance.
+        # Collect labels first, then resolve collisions in display coordinates.
+        # Latest guidance labels get first choice; prior actual labels move only
+        # when necessary. This preserves the familiar layout in normal cases.
+        callouts=[]
         if np.isfinite(rev.iloc[-1]):
-            add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
+            a=add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
+            callouts.append((a,[(-18,44),(-34,32),(4,42),(-42,18),(10,20)]))
         if np.isfinite(op.iloc[-1]):
-            add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
+            a=add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
+            callouts.append((a,[(34,30),(48,18),(18,36),(50,4),(12,8)]))
         if ax2 is not None and np.isfinite(margin[-1]):
-            add_callout(ax2,x[-1],margin[-1],f"{margin[-1]:.1f}%",mc,(40,25))
+            a=add_callout(ax2,x[-1],margin[-1],f"{margin[-1]:.1f}%",mc,(40,25))
+            callouts.append((a,[(46,40),(24,44),(55,12),(18,28),(0,48)]))
+        if guidance_latest and len(df) >= 2:
+            prev=-2
+            if np.isfinite(rev.iloc[prev]):
+                a=add_callout(ax,x[prev]-bw/2,rev.iloc[prev],fmt(rev.iloc[prev]),rc,(-18,30))
+                callouts.append((a,[(-30,44),(-42,28),(4,42),(-48,14),(8,18)]))
+            if np.isfinite(op.iloc[prev]):
+                a=add_callout(ax,x[prev]+bw/2,op.iloc[prev],fmt(op.iloc[prev]),oc,(-34,18))
+                callouts.append((a,[(-42,34),(-52,16),(-18,40),(8,30),(-48,2)]))
+            if ax2 is not None and np.isfinite(margin[prev]):
+                a=add_callout(ax2,x[prev],margin[prev],f"{margin[prev]:.1f}%",mc,(-28,30))
+                callouts.append((a,[(-38,44),(-52,28),(-12,48),(8,42),(-48,10)]))
+        fig.canvas.draw()
+        resolve_callout_collisions(fig,callouts)
 
     ymin,ymax=ax.get_ylim()
     if ymax>0: ax.set_ylim(ymin,ymax*1.14)
@@ -1182,7 +1231,7 @@ def segment_chart(df,company,currency,mode,unit,fx,n,style,title,ptype,
     buf.seek(0)
     return fig,buf
 
-st.title("決算画像ジェネレーター v96")
+st.title("決算画像ジェネレーター v100")
 st.caption("年度・四半期を完全分離した1社1マスター。Googleスプレッドシート／Excelマスター／従来CSVに対応します。")
 
 st.subheader("企業マスター")
