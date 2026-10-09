@@ -699,31 +699,53 @@ def add_callout(ax,x,y,text,color,offset):
         arrowprops=dict(arrowstyle="-",color=color,lw=1.4),zorder=10
     )
 
-def resolve_callout_collisions(fig, callouts, pad_px=5):
-    """Move only colliding data labels. Earlier callouts have higher priority.
-
-    callouts: [(annotation, [(dx,dy), ...]), ...]
-    Candidate offsets are tried in order. Bounding boxes are measured in display
-    pixels, so the same logic works across aspect ratios and twin y-axes.
-    """
+def resolve_callout_collisions(fig, callouts, pad_px=8):
+    """Place labels after final axes layout, avoiding labels and axes tick text."""
     if not callouts:
         return
+    from matplotlib.transforms import Bbox
+    fig.canvas.draw()
     renderer=fig.canvas.get_renderer()
-    accepted=[]
+    axes=[ax for ax in fig.axes if ax.get_visible()]
+    obstacles=[]
+    for ax in axes:
+        for tick in list(ax.get_xticklabels())+list(ax.get_yticklabels()):
+            if tick.get_visible() and tick.get_text():
+                obstacles.append(tick.get_window_extent(renderer).padded(3))
+        legend=ax.get_legend()
+        if legend is not None and legend.get_visible():
+            obstacles.append(legend.get_window_extent(renderer).padded(5))
+    accepted=list(obstacles)
+    # Latest guidance gets precedence, then previous actuals.
     for ann,candidates in callouts:
-        original=ann.get_position()
-        opts=[original]+[p for p in candidates if p != original]
-        chosen=original
-        for pos in opts:
+        initial=ann.get_position()
+        options=[initial]+list(candidates)
+        for radius in (28,44,62,82,106,132):
+            for dx in (-radius,0,radius,-radius//2,radius//2):
+                for dy in (radius,radius//2,-radius//2,-radius):
+                    options.append((initial[0]+dx,initial[1]+dy))
+        best=None
+        for pos in options:
             ann.set_position(pos)
             fig.canvas.draw()
-            box=ann.get_window_extent(renderer=fig.canvas.get_renderer()).expanded(1.04,1.12)
-            if not any(box.overlaps(prev) for prev in accepted):
-                chosen=pos
+            renderer=fig.canvas.get_renderer()
+            box=ann.get_window_extent(renderer).padded(pad_px)
+            overlap=sum(box.intersection(other).width*box.intersection(other).height
+                        for other in accepted if box.overlaps(other))
+            # Keep label within the image and within the graph's horizontal bounds.
+            axbox=ann.axes.get_window_extent(renderer)
+            if box.x0 < axbox.x0-10 or box.x1 > axbox.x1+12:
+                overlap+=1e7
+            if box.y0 < axbox.y0-8 or box.y1 > axbox.y1+75:
+                overlap+=1e7
+            cost=overlap*1000 + abs(pos[0]-initial[0]) + abs(pos[1]-initial[1])
+            if best is None or cost < best[0]:
+                best=(cost,pos)
+            if overlap==0:
                 break
-        ann.set_position(chosen)
+        ann.set_position(best[1])
         fig.canvas.draw()
-        accepted.append(ann.get_window_extent(renderer=fig.canvas.get_renderer()).expanded(1.04,1.12))
+        accepted.append(ann.get_window_extent(fig.canvas.get_renderer()).padded(pad_px))
 
 PROFIT_COLUMN_LABELS = {
     "operating_profit":"営業利益", "operating_income":"営業利益",
@@ -879,8 +901,6 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
             if ax2 is not None and np.isfinite(margin[prev]):
                 a=add_callout(ax2,x[prev],margin[prev],f"{margin[prev]:.1f}%",mc,(-28,30))
                 callouts.append((a,[(-38,44),(-52,28),(-12,48),(8,42),(-48,10)]))
-        fig.canvas.draw()
-        resolve_callout_collisions(fig,callouts)
 
     ymin,ymax=ax.get_ylim()
     if ymax>0: ax.set_ylim(ymin,ymax*1.14)
@@ -892,6 +912,8 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     # Graph band leaves a dedicated note band below it.
     plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
     note_text(fig,note,currency,mode,fx,y=.022,guidance=guidance_latest)
+    if show_latest and len(df):
+        resolve_callout_collisions(fig,callouts)
 
     buf=io.BytesIO()
     fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
