@@ -915,6 +915,25 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
     note_text(fig,note,currency,mode,fx,y=.022,guidance=guidance_latest)
     if show_latest and len(df):
+        # A twin axis is rendered as a whole above/below the other axis;
+        # artist zorder alone cannot bring left-axis labels over the right-axis line.
+        # Put both kinds of callouts on the front axis after converting coordinates.
+        if ax2 is not None:
+            fig.canvas.draw()
+            converted=[]
+            for annotation, candidates in callouts:
+                if annotation.axes is ax2:
+                    screen_xy=ax2.transData.transform(annotation.xy)
+                    left_xy=ax.transData.inverted().transform(screen_xy)
+                    offset=annotation.get_position()
+                    label=annotation.get_text()
+                    color=annotation.get_bbox_patch().get_facecolor()
+                    annotation.remove()
+                    annotation=add_callout(ax,left_xy[0],left_xy[1],label,color,offset)
+                converted.append((annotation,candidates))
+            callouts=converted
+            ax.set_zorder(ax2.get_zorder()+1)
+            ax.patch.set_visible(False)
         resolve_callout_collisions(fig,callouts)
 
     buf=io.BytesIO()
