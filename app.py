@@ -730,8 +730,10 @@ def resolve_callout_collisions(fig, callouts, pad_px=8):
             fig.canvas.draw()
             renderer=fig.canvas.get_renderer()
             box=ann.get_window_extent(renderer).padded(pad_px)
-            overlap=sum(box.intersection(other).width*box.intersection(other).height
-                        for other in accepted if box.overlaps(other))
+            overlap=sum((intersection.width * intersection.height)
+                        for other in accepted
+                        for intersection in [Bbox.intersection(box, other)]
+                        if intersection is not None)
             # Keep label within the image and within the graph's horizontal bounds.
             axbox=ann.axes.get_window_extent(renderer)
             if box.x0 < axbox.x0-10 or box.x1 > axbox.x1+12:
