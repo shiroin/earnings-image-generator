@@ -811,7 +811,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
 
     handles=[]; labels=[]
     if has_revenue:
-        b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
+        b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=4)
         if revenue_guidance_latest and len(b1): b1[-1].set_alpha(.35)
         handles.append(b1); labels.append("売上高（左軸）")
     if has_op:
@@ -915,25 +915,27 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
     note_text(fig,note,currency,mode,fx,y=.022,guidance=guidance_latest)
     if show_latest and len(df):
-        # A twin axis is rendered as a whole above/below the other axis;
-        # artist zorder alone cannot bring left-axis labels over the right-axis line.
-        # Put both kinds of callouts on the front axis after converting coordinates.
+        # Keep the chart layers in their natural order: profit bars (back),
+        # revenue bars, then the margin line. Only annotations go on top.
         if ax2 is not None:
             fig.canvas.draw()
+            overlay=fig.add_axes(ax.get_position(), frameon=False,
+                                 zorder=max(ax.get_zorder(),ax2.get_zorder())+1)
+            overlay.set_xlim(ax.get_xlim())
+            overlay.set_ylim(ax.get_ylim())
+            overlay.set_axis_off()
+            overlay.patch.set_visible(False)
             converted=[]
-            for annotation, candidates in callouts:
-                if annotation.axes is ax2:
-                    screen_xy=ax2.transData.transform(annotation.xy)
-                    left_xy=ax.transData.inverted().transform(screen_xy)
-                    offset=annotation.get_position()
-                    label=annotation.get_text()
-                    color=annotation.get_bbox_patch().get_facecolor()
-                    annotation.remove()
-                    annotation=add_callout(ax,left_xy[0],left_xy[1],label,color,offset)
+            for annotation,candidates in callouts:
+                screen_xy=annotation.axes.transData.transform(annotation.xy)
+                overlay_xy=overlay.transData.inverted().transform(screen_xy)
+                offset=annotation.get_position()
+                label=annotation.get_text()
+                color=annotation.get_bbox_patch().get_facecolor()
+                annotation.remove()
+                annotation=add_callout(overlay,overlay_xy[0],overlay_xy[1],label,color,offset)
                 converted.append((annotation,candidates))
             callouts=converted
-            ax.set_zorder(ax2.get_zorder()+1)
-            ax.patch.set_visible(False)
         resolve_callout_collisions(fig,callouts)
 
     buf=io.BytesIO()
