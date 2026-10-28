@@ -699,7 +699,7 @@ def add_callout(ax,x,y,text,color,offset):
         arrowprops=dict(arrowstyle="-",color=color,lw=1.4),zorder=10
     )
 
-def resolve_callout_collisions(fig, callouts, pad_px=8):
+def resolve_callout_collisions(fig, callouts, pad_px=8, protected_bars=None):
     """Place labels after final axes layout, avoiding labels and axes tick text."""
     if not callouts:
         return
@@ -716,6 +716,9 @@ def resolve_callout_collisions(fig, callouts, pad_px=8):
         if legend is not None and legend.get_visible():
             obstacles.append(legend.get_window_extent(renderer).padded(5))
     accepted=list(obstacles)
+    protected_bars = protected_bars or []
+    bar_boxes = [bar.get_window_extent(renderer).padded(3)
+                 for bar in protected_bars if bar is not None and bar.get_visible()]
     # Latest guidance gets precedence, then previous actuals.
     for ann,candidates in callouts:
         initial=ann.get_position()
@@ -729,11 +732,21 @@ def resolve_callout_collisions(fig, callouts, pad_px=8):
             ann.set_position(pos)
             fig.canvas.draw()
             renderer=fig.canvas.get_renderer()
-            box=ann.get_window_extent(renderer).padded(pad_px)
+            # Use the colored label patch, NOT the entire annotation extent:
+            # annotation extent includes the connector line pointing to the bar.
+            patch=ann.get_bbox_patch()
+            box=(patch.get_window_extent(renderer) if patch is not None
+                 else ann.get_window_extent(renderer)).padded(pad_px)
             overlap=sum((intersection.width * intersection.height)
                         for other in accepted
                         for intersection in [Bbox.intersection(box, other)]
                         if intersection is not None)
+            # A label must NEVER cover a bar, especially the latest forecast bar tip.
+            bar_overlap=sum((hit.width * hit.height)
+                            for bar_box in bar_boxes
+                            for hit in [Bbox.intersection(box,bar_box)]
+                            if hit is not None)
+            overlap += bar_overlap * 100
             # Keep label within the image and within the graph's horizontal bounds.
             axbox=ann.axes.get_window_extent(renderer)
             if box.x0 < axbox.x0-10 or box.x1 > axbox.x1+12:
@@ -747,7 +760,10 @@ def resolve_callout_collisions(fig, callouts, pad_px=8):
                 break
         ann.set_position(best[1])
         fig.canvas.draw()
-        accepted.append(ann.get_window_extent(fig.canvas.get_renderer()).padded(pad_px))
+        final_renderer=fig.canvas.get_renderer()
+        patch=ann.get_bbox_patch()
+        accepted.append((patch.get_window_extent(final_renderer) if patch is not None
+                         else ann.get_window_extent(final_renderer)).padded(pad_px))
 
 PROFIT_COLUMN_LABELS = {
     "operating_profit":"営業利益", "operating_income":"営業利益",
@@ -876,33 +892,6 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
         xs=[.055,.365,.675]
         for x0,s in zip(xs,specs):
             add_kpi_card(fig,x0,.69,.27,.14,*s)
-        # Latest-period callouts. When the latest period contains company guidance,
-        # also label the immediately preceding period so readers can compare
-        # forecast vs the latest actual at a glance.
-        # Collect labels first, then resolve collisions in display coordinates.
-        # Latest guidance labels get first choice; prior actual labels move only
-        # when necessary. This preserves the familiar layout in normal cases.
-        callouts=[]
-        if np.isfinite(rev.iloc[-1]):
-            a=add_callout(ax,x[-1]-bw/2,rev.iloc[-1],fmt(rev.iloc[-1]),rc,(-18,30))
-            callouts.append((a,[(-18,44),(-34,32),(4,42),(-42,18),(10,20)]))
-        if np.isfinite(op.iloc[-1]):
-            a=add_callout(ax,x[-1]+bw/2,op.iloc[-1],fmt(op.iloc[-1]),oc,(30,16))
-            callouts.append((a,[(34,30),(48,18),(18,36),(50,4),(12,8)]))
-        if ax2 is not None and np.isfinite(margin[-1]):
-            a=add_callout(ax2,x[-1],margin[-1],f"{margin[-1]:.1f}%",mc,(40,25))
-            callouts.append((a,[(46,40),(24,44),(55,12),(18,28),(0,48)]))
-        if guidance_latest and len(df) >= 2:
-            prev=-2
-            if np.isfinite(rev.iloc[prev]):
-                a=add_callout(ax,x[prev]-bw/2,rev.iloc[prev],fmt(rev.iloc[prev]),rc,(-18,30))
-                callouts.append((a,[(-30,44),(-42,28),(4,42),(-48,14),(8,18)]))
-            if np.isfinite(op.iloc[prev]):
-                a=add_callout(ax,x[prev]+bw/2,op.iloc[prev],fmt(op.iloc[prev]),oc,(-34,18))
-                callouts.append((a,[(-42,34),(-52,16),(-18,40),(8,30),(-48,2)]))
-            if ax2 is not None and np.isfinite(margin[prev]):
-                a=add_callout(ax2,x[prev],margin[prev],f"{margin[prev]:.1f}%",mc,(-28,30))
-                callouts.append((a,[(-38,44),(-52,28),(-12,48),(8,42),(-48,10)]))
 
     ymin,ymax=ax.get_ylim()
     if ymax>0: ax.set_ylim(ymin,ymax*1.14)
@@ -914,29 +903,6 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     # Graph band leaves a dedicated note band below it.
     plt.subplots_adjust(left=.08,right=.92,bottom=.125,top=.65)
     note_text(fig,note,currency,mode,fx,y=.022,guidance=guidance_latest)
-    if show_latest and len(df):
-        # Keep the chart layers in their natural order: profit bars (back),
-        # revenue bars, then the margin line. Only annotations go on top.
-        if ax2 is not None:
-            fig.canvas.draw()
-            overlay=fig.add_axes(ax.get_position(), frameon=False,
-                                 zorder=max(ax.get_zorder(),ax2.get_zorder())+1)
-            overlay.set_xlim(ax.get_xlim())
-            overlay.set_ylim(ax.get_ylim())
-            overlay.set_axis_off()
-            overlay.patch.set_visible(False)
-            converted=[]
-            for annotation,candidates in callouts:
-                screen_xy=annotation.axes.transData.transform(annotation.xy)
-                overlay_xy=overlay.transData.inverted().transform(screen_xy)
-                offset=annotation.get_position()
-                label=annotation.get_text()
-                color=annotation.get_bbox_patch().get_facecolor()
-                annotation.remove()
-                annotation=add_callout(overlay,overlay_xy[0],overlay_xy[1],label,color,offset)
-                converted.append((annotation,candidates))
-            callouts=converted
-        resolve_callout_collisions(fig,callouts)
 
     buf=io.BytesIO()
     fig.savefig(buf,format="png",dpi=dpi,bbox_inches=None,facecolor=THEME["bg"])
@@ -1450,7 +1416,7 @@ with t1:
     effective_mc=normalize_color(company_meta.get(META_MARGIN_COLOR),mc)
 
     sm=st.checkbox(f"{profit_label}率を表示",True)
-    sl=st.checkbox("最新期ラベルを表示",True)
+    sl=st.checkbox("KPIカードを表示",True)
     # v76: UIの「四半期 / 年度」と会社全体サブタイトルを同期。
     # モード切替時は上で session_state を更新するため、古い入力値が残らない。
     default_company_subtitle = "四半期業績" if ptype == "四半期" else "年度業績"
@@ -1541,7 +1507,7 @@ def seg_tab(kind, dataset=1):
     av=max(len(ed.dropna(subset=["period"])),1)
     n=period_count_input("表示する期間数",av,ptype,"n"+key,mx_allowed)
     style=st.radio("表示方法",["積み上げ","横並び"],horizontal=True,key="s"+key)
-    lab=st.checkbox("最新期のデータラベル・前年比を表示",True,key="l"+key)
+    lab=st.checkbox("最新期のデータラベル・前年比を表示",False,key="l"+key)
     default_seg_subtitle=seg_meta.get(META_SUBTITLE) or ("セグメント別 売上高の推移" if kind=="売上高" else "セグメント別 営業利益の推移")
     seg_subtitle=st.text_input("サブタイトル",default_seg_subtitle,key="subtitle_"+key)
 
@@ -1631,7 +1597,7 @@ with t4:
     orders_label=st.text_input("受注高の表示名",default_orders_label,key="orders_label",
                                help="例：受注高 / cRPO / order")
     orders_label=str(orders_label or "受注高").strip()
-    show_orders_latest=st.checkbox("最新期ラベルを表示",True,key="orders_latest")
+    show_orders_latest=st.checkbox("最新期ラベルを表示",False,key="orders_latest")
     default_orders_subtitle=orders_meta.get(META_SUBTITLE) or f"{orders_label}・{backlog_label}の推移"
     orders_subtitle=st.text_input("サブタイトル",default_orders_subtitle,key="orders_subtitle")
 
