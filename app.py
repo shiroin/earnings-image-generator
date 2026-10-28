@@ -31,8 +31,8 @@ set_japanese_font()
 THEME = {
     "bg":"#F3F4F6",
     "text":"#17325C","muted":"#61728A","grid":"#DCE3EC","axis":"#AEB9C7",
-    "revenue":"#1675F8","profit":"#08A89C","margin":"#FF8A00",
-    "revenue_bg":"#F1F6FF","profit_bg":"#F0FAF8","margin_bg":"#FFF7EE",
+    "revenue":"#2A85FE","profit":"#F8586E","margin":"#FF8500",
+    "revenue_bg":"#F0F5FE","profit_bg":"#FCF2F5","margin_bg":"#FFF7EE",
     "card_border":"#DCE3EC",
     "segment_palette":["#1675F8","#20B779","#FFA126","#F45B73","#8B5BD6",
                        "#0EA5E9","#84CC16","#D946EF","#64748B"]
@@ -819,7 +819,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     margin[~np.isfinite(margin)]=np.nan
     has_margin=bool(np.isfinite(margin).any())
 
-    x=np.arange(len(df)); bw=.36
+    x=np.arange(len(df)); bw=.82
     fw,fh=fig_size(aspect,cw,ch)
     fig,ax=plt.subplots(figsize=(fw,fh))
     fig.patch.set_facecolor(THEME["bg"])
@@ -827,11 +827,11 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
 
     handles=[]; labels=[]
     if has_revenue:
-        b1=ax.bar(x-bw/2,rev,bw,color=rc,label="売上高（左軸）",zorder=4)
+        b1=ax.bar(x,rev,bw,color=rc,label="売上高（左軸）",zorder=3)
         if revenue_guidance_latest and len(b1): b1[-1].set_alpha(.35)
         handles.append(b1); labels.append("売上高（左軸）")
     if has_op:
-        b2=ax.bar(x+bw/2,op,bw,color=oc,label=f"{profit_label}（左軸）",zorder=3)
+        b2=ax.bar(x,op,bw,color=oc,label=f"{profit_label}（左軸）",zorder=4)
         if profit_guidance_latest and len(b2): b2[-1].set_alpha(.35)
         handles.append(b2); labels.append(f"{profit_label}（左軸）")
 
@@ -839,6 +839,7 @@ def company_chart(df,company,currency,mode,unit,fx,ptype,n,
     if show_margin and has_margin:
         ax2=ax.twinx()
         ax2.set_facecolor("none")
+        ax2.set_zorder(ax.get_zorder()+1)
         line,=ax2.plot(x,margin,color=mc,marker="o",markersize=6,
                        markeredgecolor="white",markeredgewidth=.7,
                        linewidth=2.7,zorder=6,label=f"{profit_label}率（右軸）")
